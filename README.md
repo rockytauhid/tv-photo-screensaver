@@ -26,7 +26,7 @@ on that TV.
 **Decisions**
 - Language: Kotlin, standard library only until a dependency is justified. `minSdk 26`.
 - Repository will be **public**: no secrets, IPs, Wi-Fi names, tokens or personal paths. Choose a licence before the
-  first push (MIT is what cleanyourtv uses).
+  first push (done: MIT).
 - No NAS. The owner has a Windows PC running Plex Media Server, usable as a LAN source (Plex photo library, or an
   SMB share of a photo folder).
 - First cloud source: **OneDrive** (device-code flow, `Files.Read`, thumbnails). Other clouds come one at a time.
@@ -73,4 +73,4 @@ docs/                                                 context, design, deploymen
 
 ## Licence
 
-Not chosen yet. Code copied from cleanyourtv is MIT; keep its notice.
+MIT, see [LICENSE](LICENSE). Code copied from cleanyourtv is also MIT; keep its notice.
