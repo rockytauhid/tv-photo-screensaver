@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Photo Dream</string>
+    <string name="dream_name">Photo Dream</string>
+    <string name="placeholder">Photo Dream: no photo source yet</string>
+</resources>

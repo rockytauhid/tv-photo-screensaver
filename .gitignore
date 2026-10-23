@@ -1,0 +1,17 @@
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+.idea/
+*.iml
+
+# Session files: backups, screenshots, notes. Never committed.
+backup/
+shots/
+work/
+
+# Secrets: cloud client secrets, tokens, keystores
+*.keystore
+*.jks
+secrets.properties
