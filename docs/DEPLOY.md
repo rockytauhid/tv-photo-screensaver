@@ -4,7 +4,7 @@ Set up once: the PC needs JDK 17, the Android SDK (platform 34, build-tools 34.0
 details are in [CONTEXT.md](CONTEXT.md). The TV needs USB debugging and Network/ADB debugging on, and the PC needs
 to be allowed once through the prompt on the TV. Close ADB again when you finish (last section).
 
-All commands run from `C:\Users\rocky\Repository\tv-photo-screensaver` in PowerShell. Keep `<tv ip>` out of anything
+All commands run from `<repo>` in PowerShell. Keep `<tv ip>` out of anything
 you commit.
 
 ## Build
@@ -23,7 +23,7 @@ Gradle needs it, so create it with `sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\A
 Uses the cleanyourtv ADB client, which needs no `adb.exe`. In PowerShell:
 
 ```powershell
-$tools = 'C:\Users\rocky\Repository\cleanyourtv\tools'
+$tools = '<cleanyourtv clone>\tools'
 $py = "$tools\venv\Scripts\python.exe"
 $env:TV_HOST = '<tv ip>'
 & $py "$tools\tv.py" --push app\build\outputs\apk\release\app-release.apk /data/local/tmp/photodream.apk

@@ -55,7 +55,7 @@ or a lot of free memory. `compileSdk` and `targetSdk` are 34 only so the build t
 
 ## Tools from cleanyourtv that help
 
-They live in `C:\Users\rocky\Repository\cleanyourtv\tools` and work with its Python virtualenv
+They live in `<cleanyourtv clone>\tools` and work with its Python virtualenv
 (`tools\venv`, already created, packages `adb-shell`, `rsa`, `cryptography`). Set `$env:TV_HOST` first.
 
 | Task | Command |

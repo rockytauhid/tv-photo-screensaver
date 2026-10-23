@@ -22,7 +22,7 @@ storage. Kotlin (standard library only until a dependency is justified), `minSdk
   `shots/` and `work/` are git-ignored; keep them that way.
 - **Do not add dependencies** without writing down in `docs/DESIGN.md` what they cost (APK size, heap, licence) and
   why a hand-written client would not do. Avoid Google Play Services.
-- **Do not edit the cleanyourtv repository** from here. It is a reference at `C:\Users\rocky\Repository\cleanyourtv`.
+- **Do not edit the cleanyourtv repository** from here. It is a reference at `<cleanyourtv clone>`.
 - **Be honest about what is verified.** Mark unverified API behaviour as such in the docs, and check cloud API terms
   against their current documentation before coding against them.
 

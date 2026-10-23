@@ -13,6 +13,36 @@ The TV's own screensaver (Chromecast's Backdrop) uses Google Photos through the 
 does not show for this TV. This project started from a [cleanyourtv](https://github.com/Gathin23/cleanyourtv) session
 on that TV.
 
+## Handoff: state and next steps (read this first in a new session)
+
+**Done**
+- Kotlin skeleton (`PhotoDream` DreamService, placeholder text) builds a 19 KB release APK. Not installed on the TV yet.
+- TV tooling and cleanyourtv rules are captured in [docs/CONTEXT.md](docs/CONTEXT.md).
+- The TV (Sony KD-55X9500D, Android 8.0) already runs the cleanyourtv launcher; its ADB is **closed** (developer options
+  off). To test, the owner must re-enable Developer options > USB debugging and Network debugging, and we close ADB
+  again at the end ([docs/DEPLOY.md](docs/DEPLOY.md)). The cleanyourtv clone is expected next to this repo, with its
+  Python venv in `tools\venv`.
+
+**Decisions**
+- Language: Kotlin, standard library only until a dependency is justified. `minSdk 26`.
+- Repository will be **public**: no secrets, IPs, Wi-Fi names, tokens or personal paths. Choose a licence before the
+  first push (MIT is what cleanyourtv uses).
+- No NAS. The owner has a Windows PC running Plex Media Server, usable as a LAN source (Plex photo library, or an
+  SMB share of a photo folder).
+- First cloud source: **OneDrive** (device-code flow, `Files.Read`, thumbnails). Other clouds come one at a time.
+- Order: 1 local slideshow engine, 2 D-pad settings screen with its own folder browser (the TV has no DocumentsUI),
+  3 OneDrive, 4 Plex, 5 SMB/WebDAV and other clouds, 6 polish.
+
+**Needed from the owner before OneDrive**
+1. A free Microsoft Entra app registration: public client, device-code flow enabled, delegated `Files.Read` and
+   `offline_access`. Its client id goes in a git-ignored `secrets.properties`, never in the repo.
+2. Personal or work/school account, and the photo folder (for example `Pictures`).
+3. Whether the photos are mostly HEIC (Android 8 cannot decode it).
+
+**Verify before coding:** every cloud and Plex API detail in `docs/DESIGN.md` is from memory.
+**Unverified on the TV:** how to start a dream on demand, whether the Settings app shows a gear for the dream, and
+USB access while debugging is on.
+
 ## Where to start
 
 | Read | For |
