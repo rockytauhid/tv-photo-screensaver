@@ -12,7 +12,10 @@ storage. Kotlin (standard library only until a dependency is justified), `minSdk
 
 - **Target the oldest TV:** API 26, 1.5 GB RAM, 192 MB heap limit, no touchscreen, no DocumentsUI, no keyboard.
   Everything must work with the D-pad. Check `Build.VERSION.SDK_INT` before any newer API.
-- **Memory first:** decode images at 1920x1080 or smaller, at most three bitmaps alive, no full-size decodes.
+- **Memory first:** decode slideshow/preview images to the display dimensions only while each bitmap stays within
+  one-eighth of the app heap (8 MB minimum, 256 MB maximum). Keep the slideshow's current, next, and transition
+  images within a three-frame budget, accounting for temporary orientation copies. Gallery thumbnails use a
+  separately bounded cache. Never decode beyond the memory budget.
 - **Nothing runs unless the dream is showing** (or the settings screen is open): no background service, no polling,
   no wake locks.
 - **No telemetry, analytics, ads or Firebase.** Network only to servers the person configures.

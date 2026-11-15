@@ -4,8 +4,13 @@ A screensaver for older Android TVs that shows your own photos: from local stora
 (SMB, WebDAV) and from cloud storage (OneDrive, Dropbox, and others if they allow it).
 
 First target: Sony BRAVIA KD-55X9500D, Android 8.0 (API 26), about 1.5 GB RAM, no keyboard or touch.
-Status: **skeleton only.** It builds and defines a `DreamService` that shows a placeholder line; it has not been
-installed on the TV yet and no photo source exists.
+Status: **local slideshow and gallery implemented.** It browses local/USB folders, shows supported photos with a
+configurable interval, transition, and order, displays available EXIF details, and provides an on-demand thumbnail
+grid and full-screen detail preview for large folders. It builds, but has not been installed or verified on the TV.
+Decoded slideshow and preview images adapt to the screen size within a heap-based bitmap budget. 4K/8K images may
+be sampled down on devices without enough memory and can look softer; this has not been visually tested on 4K/8K
+hardware.
+Settings can launch an immediate in-app slideshow or open Android's screensaver settings to select Photo Dream.
 
 ## Why
 
@@ -16,7 +21,7 @@ on that TV.
 ## Handoff: state and next steps (read this first in a new session)
 
 **Done**
-- Kotlin skeleton (`PhotoDream` DreamService, placeholder text) builds a 19 KB release APK. Not installed on the TV yet.
+- Local photo slideshow and D-pad settings/folder picker are implemented. The app has not yet been installed on the TV.
 - TV tooling and cleanyourtv rules are captured in [docs/CONTEXT.md](docs/CONTEXT.md).
 - The TV (Sony KD-55X9500D, Android 8.0) already runs the cleanyourtv launcher; its ADB is **closed** (developer options
   off). To test, the owner must re-enable Developer options > USB debugging and Network debugging, and we close ADB
@@ -57,7 +62,7 @@ USB access while debugging is on.
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-.\gradlew.bat --no-daemon assembleRelease
+.\gradlew.bat --no-daemon testDebugUnitTest assembleRelease
 ```
 
 Requires JDK 17 and Android SDK platform 34 with build-tools 34.0.0. Gradle 8.9 and the Android Gradle Plugin 8.5.2 are
@@ -66,8 +71,13 @@ the same as cleanyourtv, so a cached build is fast.
 ## Layout
 
 ```
-app/src/main/java/com/photodream/tv/PhotoDream.kt     the DreamService (placeholder)
-app/src/main/AndroidManifest.xml                      dream service, INTERNET permission, leanback features
+app/src/main/java/com/photodream/tv/PhotoDream.kt     the DreamService and sampled photo slideshow
+app/src/main/java/com/photodream/tv/SettingsActivity.kt     D-pad settings screen
+app/src/main/java/com/photodream/tv/FolderPickerActivity.kt     local and USB folder browser
+app/src/main/java/com/photodream/tv/GalleryActivity.kt     on-demand thumbnail gallery for large folders
+app/src/main/java/com/photodream/tv/PhotoPreviewActivity.kt     full-screen photo preview and metadata panel
+app/src/main/java/com/photodream/tv/SlideshowActivity.kt     manually launched immersive slideshow
+app/src/main/AndroidManifest.xml                      dream service, photo permissions, leanback features
 docs/                                                 context, design, deployment
 ```
 

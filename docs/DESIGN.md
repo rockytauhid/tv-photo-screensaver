@@ -1,8 +1,8 @@
 # Design notes
 
-Status: a plan, not an implementation. Nothing here has been tested on the TV except where it says "measured".
-Statements marked **verify** come from memory of vendor documentation and must be checked against the current docs
-before code depends on them: cloud APIs change often.
+Status: the local slideshow and settings screen are implemented, but not yet tested on the TV. Nothing here has
+been tested on the TV except where it says "measured". Statements marked **verify** come from memory of vendor
+documentation and must be checked against the current docs before code depends on them: cloud APIs change often.
 
 ## Goal
 
@@ -130,7 +130,7 @@ Rules for cloud code:
 
 ## Settings and distribution
 
-- Settings screen: add/remove sources, folder browser, interval (5 s to 5 min), order (shuffle, by date, by name),
+- Settings screen: add/remove sources, folder browser, interval (5 s to 5 min), order (random, by date, by name),
   transition (cut, fade), clock overlay (off, small), test button ("show now").
 - A `DreamService` can point to a settings activity through `android:settingsActivity` and a
   `<meta-data android:name="android.service.dream">` XML resource. Whether the Sony's Settings app shows a gear is
@@ -155,8 +155,8 @@ Rules for cloud code:
 | # | Milestone | Done when |
 |---|---|---|
 | 0 | Skeleton | `PhotoDream` builds, is listed under Screen saver and starts on the TV. **The code scaffold builds; not yet installed.** |
-| 1 | Local slideshow | Reads a folder on internal/USB storage, crossfades, survives 500 slides without growing the heap. |
-| 2 | Settings | D-pad screen with a folder browser, interval and order. |
+| 1 | Local slideshow | Reads supported photos recursively from a selected internal/USB folder; images are sampled to at most 1920x1080 and transitions support cut, fade and slide. Implemented; TV playback and long-run memory are not yet verified. |
+| 2 | Settings and gallery | D-pad folder browser, 5-second-step interval from 5 to 300 seconds, metadata toggle, transition/order selection, virtualized thumbnail gallery and full-screen detail preview. Implemented; TV navigation and 10,000-photo responsiveness are not yet verified on hardware. |
 | 3 | WebDAV, then SMB | A NAS share plays; offline NAS falls back cleanly. |
 | 4 | Cloud (one service) | OneDrive device-flow sign-in, thumbnails, token stored encrypted. Then Dropbox. |
 | 5 | Polish | Clock overlay, Ken Burns if the GPU copes, caching limits, translations. |
@@ -172,6 +172,45 @@ Rules for cloud code:
 - **First cloud: OneDrive.** Others (Dropbox, ...) are added one at a time afterwards.
 - Revised milestone order: 0 skeleton, 1 local slideshow, 2 settings screen, 3 OneDrive, 4 Plex, 5 SMB/WebDAV and
   other clouds, 6 polish. OneDrive moves ahead of the LAN sources.
+
+## Local implementation notes
+
+- The settings app requests photo-read permission and includes a D-pad folder browser rooted at `/storage`, so
+  mounted USB volumes can be selected without relying on DocumentsUI. Direct file browsing is intended for the
+  Android 8 target; scoped-storage behaviour on newer Android versions is not verified.
+- The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes to a maximum
+  of 1920x1080, reads EXIF date, GPS coordinates, camera make/model, exposure, aperture, ISO and focal length when
+  present, and gracefully skips unreadable files.
+- Interval settings range from 5 to 300 seconds in 5-second steps. Transitions are cut, crossfade and horizontal
+  slide. Metadata visibility can be toggled as a group.
+- Settings also open a D-pad photo gallery. It virtualizes the grid, decodes 256x144 thumbnails off the UI thread,
+  bounds concurrent decode work and caches only a small LRU of thumbnails; browsing does not change the slideshow's
+  folder-wide photo set.
+- Slideshow order is configurable by name, capture date/time, or random per run. Date order supports newest-first
+  and oldest-first; photos without EXIF capture time use filesystem modification time.
+- Selecting a gallery thumbnail opens a sampled full-screen preview with a right-side details panel. The panel is
+  hidden by default, configurable in settings, and toggled with its D-pad button or the remote's Info key.
+- Gallery sorting cycles through filename A–Z, filename Z–A, capture time oldest-first and newest-first; the
+  preview uses that same order and wraps left/right at both ends.
+- Thumbnails show a loading label while decoding and a "No preview" placeholder for unreadable images. The
+  full-screen preview shows the failed filename and metadata, and left/right navigation remains available.
+- Pixel Motion Photos and other photos with embedded motion clips currently display only their still image;
+  embedded video playback is not implemented.
+- Settings can launch an immediate app-owned full-screen slideshow using the configured interval, transition and
+  metadata visibility; left/right navigate photos and Back exits. Android does not expose a public API for an
+  ordinary app to start or select its `DreamService`; the "Set as screensaver" button therefore opens the system's
+  screensaver settings while Photo Dream is not selected, and is disabled once selected.
+
+## Display resolution behavior
+
+- Slideshow and preview decoding target the display's pixel dimensions, subject to a per-bitmap budget of
+  one-eighth of the app heap (8 MB minimum, 256 MB maximum). The target TV's 192 MB heap and 1080p output allow
+  native 1080p images; lower-resolution screens avoid unnecessary decoding. 4K/8K images can be decoded at higher
+  resolutions only when the device heap allows it; otherwise they are sampled down and upscaled, which can look
+  softer. Image sampling uses powers of two, so it may choose a smaller bitmap than the budget would otherwise allow.
+- Gallery thumbnails scale with display density up to 512x288 and remain in the existing bounded LRU cache.
+- The target hardware has only been measured at 1920x1080 output. 720p, native 4K and 8K rendering have not been
+  visually tested on hardware.
 
 ## Open questions for the owner
 
