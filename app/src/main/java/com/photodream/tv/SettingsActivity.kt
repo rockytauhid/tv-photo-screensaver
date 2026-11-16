@@ -2,7 +2,6 @@ package com.photodream.tv
 
 import android.Manifest
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,35 +10,44 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 
 class SettingsActivity : Activity() {
     private lateinit var preferences: android.content.SharedPreferences
     private lateinit var folderLabel: TextView
     private lateinit var folderButton: Button
-    private lateinit var galleryButton: Button
-    private lateinit var startNowButton: Button
     private lateinit var screensaverButton: Button
     private lateinit var screensaverStatus: TextView
     private lateinit var permissionButton: Button
-    private lateinit var intervalLabel: TextView
-    private lateinit var slowerButton: Button
-    private lateinit var fasterButton: Button
+    private lateinit var speedButton: Button
     private lateinit var metadataButton: Button
-    private lateinit var transitionButton: Button
-    private lateinit var orderButton: Button
-    private lateinit var dateDirectionButton: Button
+    private lateinit var styleButton: Button
+    private lateinit var shuffleButton: Button
+    private lateinit var photoSetButton: Button
     private lateinit var previewDetailsButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
         setContentView(createSettingsView())
+        window.setBackgroundDrawableResource(android.R.color.transparent)
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window.setGravity(Gravity.RIGHT or Gravity.TOP)
+        window.setLayout(
+            resources.displayMetrics.widthPixels / 2,
+            WindowManager.LayoutParams.MATCH_PARENT
+        )
+        window.attributes = window.attributes.apply { dimAmount = 0.55f }
         refreshSettings()
+        if (permissionButton.isEnabled) {
+            permissionButton.requestFocus()
+        } else {
+            folderButton.requestFocus()
+        }
     }
 
     override fun onResume() {
@@ -68,49 +76,41 @@ class SettingsActivity : Activity() {
     private fun createSettingsView(): View {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 28, 48, 36)
+            setPadding(dp(24), dp(16), dp(24), dp(24))
+            gravity = Gravity.TOP
+            setBackgroundColor(0xFF202020.toInt())
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        content.addView(TextView(this).apply {
+        header.addView(TextView(this).apply {
             text = getString(R.string.settings_title)
             textSize = 30f
             setTextColor(0xFFFFFFFF.toInt())
-            setPadding(0, 0, 0, 20)
+            maxLines = 1
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addButton(header, getString(R.string.settings_close)) { finish() }
+        content.addView(header, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(12)
         })
         folderLabel = addLabel(content)
         permissionButton = addButton(content, "") { requestPhotoPermission() }
         folderButton = addButton(content, getString(R.string.choose_folder)) {
             startActivityForResult(Intent(this, FolderPickerActivity::class.java), PICK_FOLDER)
         }
-        galleryButton = addButton(content, getString(R.string.open_gallery)) {
-            startActivity(Intent(this, GalleryActivity::class.java))
-        }
-        startNowButton = addButton(content, "") {
-            startActivity(Intent(this, SlideshowActivity::class.java))
-        }
-        addLabel(content).apply { text = getString(R.string.start_slideshow_hint) }
         screensaverStatus = addLabel(content)
         screensaverButton = addButton(content, getString(R.string.set_as_screensaver)) {
             openScreensaverSettings()
         }
         addLabel(content).apply { text = getString(R.string.set_screensaver_hint) }
-        intervalLabel = addLabel(content)
-        val intervalControls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        slowerButton = addButton(intervalControls, getString(R.string.interval_decrease)) {
-            changeInterval(-5)
-        }
-        fasterButton = addButton(intervalControls, getString(R.string.interval_increase)) {
-            changeInterval(5)
-        }
-        content.addView(intervalControls)
+        speedButton = addButton(content, "") { cycleSpeed() }
         metadataButton = addButton(content, "") {
             val enabled = preferences.getBoolean(SHOW_METADATA, true)
             preferences.edit().putBoolean(SHOW_METADATA, !enabled).apply()
             refreshSettings()
         }
-        transitionButton = addButton(content, "") {
+        styleButton = addButton(content, "") {
             val current = preferences.getString(TRANSITION, FADE)
             val next = when (current) {
                 FADE -> SLIDE
@@ -120,19 +120,18 @@ class SettingsActivity : Activity() {
             preferences.edit().putString(TRANSITION, next).apply()
             refreshSettings()
         }
-        orderButton = addButton(content, "") {
-            val next = when (preferences.getString(PHOTO_ORDER, ORDER_NAME)) {
-                ORDER_NAME -> ORDER_DATE_TIME
-                ORDER_DATE_TIME -> ORDER_RANDOM
-                else -> ORDER_NAME
-            }
+        shuffleButton = addButton(content, "") {
+            val current = preferences.getString(PHOTO_ORDER, ORDER_DATE_TIME)
+            val next = if (current == ORDER_RANDOM) ORDER_DATE_TIME else ORDER_RANDOM
             preferences.edit().putString(PHOTO_ORDER, next).apply()
             refreshSettings()
         }
-        dateDirectionButton = addButton(content, "") {
-            val newestFirst = preferences.getBoolean(DATE_NEWEST_FIRST, true)
-            preferences.edit().putBoolean(DATE_NEWEST_FIRST, !newestFirst).apply()
-            refreshSettings()
+        photoSetButton = addButton(content, "") {
+            if (PhotoFavorites.load(preferences).isNotEmpty()) {
+                val current = preferences.getBoolean(PLAY_FAVORITES_ONLY, false)
+                preferences.edit().putBoolean(PLAY_FAVORITES_ONLY, !current).apply()
+                refreshSettings()
+            }
         }
         previewDetailsButton = addButton(content, "") {
             val showDetails = preferences.getBoolean(SHOW_PREVIEW_DETAILS, false)
@@ -142,7 +141,7 @@ class SettingsActivity : Activity() {
         addLabel(content).apply { text = getString(R.string.settings_hint) }
 
         return ScrollView(this).apply {
-            setBackgroundColor(0xFF101010.toInt())
+            setBackgroundColor(0xFF202020.toInt())
             isFocusable = false
             addView(content)
         }
@@ -181,9 +180,6 @@ class SettingsActivity : Activity() {
         )
         permissionButton.isEnabled = !granted
         folderButton.isEnabled = granted
-        galleryButton.isEnabled = granted && !folder.isNullOrBlank()
-        startNowButton.text = getString(R.string.start_screensaver_now)
-        startNowButton.isEnabled = granted && !folder.isNullOrBlank()
         val screensaverSelected = isPhotoDreamSelected()
         screensaverStatus.text = getString(
             if (screensaverSelected) R.string.screensaver_selected else R.string.screensaver_not_selected
@@ -192,10 +188,8 @@ class SettingsActivity : Activity() {
             if (screensaverSelected) R.string.screensaver_already_selected else R.string.set_as_screensaver
         )
         screensaverButton.isEnabled = !screensaverSelected
-        val interval = preferences.getInt(INTERVAL_SECONDS, 30).coerceIn(5, 300)
-        intervalLabel.text = getString(R.string.interval_setting, interval)
-        slowerButton.isEnabled = interval > 5
-        fasterButton.isEnabled = interval < 300
+        val speed = SlideshowSpeed.normalize(preferences)
+        speedButton.text = getString(R.string.speed_setting, getString(speed.labelRes))
         metadataButton.text = getString(
             R.string.metadata_setting,
             getString(
@@ -208,20 +202,23 @@ class SettingsActivity : Activity() {
             CUT -> R.string.transition_cut
             else -> R.string.transition_fade
         }
-        transitionButton.text = getString(R.string.transition_setting, getString(transitionName))
-        val order = preferences.getString(PHOTO_ORDER, ORDER_NAME)
-        val orderName = when (order) {
-            ORDER_DATE_TIME -> R.string.order_datetime
-            ORDER_RANDOM -> R.string.order_random
-            else -> R.string.order_name
-        }
-        orderButton.text = getString(R.string.order_setting, getString(orderName))
-        val newestFirst = preferences.getBoolean(DATE_NEWEST_FIRST, true)
-        dateDirectionButton.text = getString(
-            R.string.date_direction_setting,
-            getString(if (newestFirst) R.string.newest_first else R.string.oldest_first)
+        styleButton.text = getString(R.string.style_setting, getString(transitionName))
+        val shuffleEnabled = preferences.getString(PHOTO_ORDER, ORDER_DATE_TIME) == ORDER_RANDOM
+        shuffleButton.text = getString(
+            R.string.shuffle_setting,
+            getString(if (shuffleEnabled) R.string.on else R.string.off)
         )
-        dateDirectionButton.isEnabled = order == ORDER_DATE_TIME
+        val favoriteCount = PhotoFavorites.load(preferences).size
+        val favoritesOnly = preferences.getBoolean(PLAY_FAVORITES_ONLY, false) &&
+            favoriteCount > 0
+        if (favoriteCount == 0 && preferences.getBoolean(PLAY_FAVORITES_ONLY, false)) {
+            preferences.edit().putBoolean(PLAY_FAVORITES_ONLY, false).apply()
+        }
+        photoSetButton.text = getString(
+            R.string.slideshow_photo_set,
+            getString(if (favoritesOnly) R.string.show_favorite else R.string.show_all)
+        )
+        photoSetButton.isEnabled = favoriteCount > 0
         previewDetailsButton.text = getString(
             R.string.preview_details_setting,
             getString(if (preferences.getBoolean(SHOW_PREVIEW_DETAILS, false)) R.string.on else R.string.off)
@@ -232,18 +229,10 @@ class SettingsActivity : Activity() {
         requestPermissions(arrayOf(photoPermission()), REQUEST_STORAGE_PERMISSION)
     }
 
-    private fun changeInterval(delta: Int) {
-        val current = preferences.getInt(INTERVAL_SECONDS, 30)
-        preferences.edit().putInt(INTERVAL_SECONDS, (current + delta).coerceIn(5, 300)).apply()
+    private fun cycleSpeed() {
+        val nextSpeed = SlideshowSpeed.normalize(preferences).next()
+        preferences.edit().putInt(INTERVAL_SECONDS, nextSpeed.intervalSeconds).apply()
         refreshSettings()
-    }
-
-    private fun openScreensaverSettings() {
-        try {
-            startActivity(Intent(Settings.ACTION_DREAM_SETTINGS))
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, R.string.screensaver_settings_unavailable, Toast.LENGTH_LONG).show()
-        }
     }
 
     private fun isPhotoDreamSelected(): Boolean {
@@ -259,6 +248,8 @@ class SettingsActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
         else Manifest.permission.READ_EXTERNAL_STORAGE
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     companion object {
         const val PREFERENCES = "photo_dream_settings"
         const val PHOTO_FOLDER = "photo_folder"
@@ -266,12 +257,11 @@ class SettingsActivity : Activity() {
         const val SHOW_METADATA = "show_metadata"
         const val TRANSITION = "transition"
         const val PHOTO_ORDER = "photo_order"
-        const val DATE_NEWEST_FIRST = "date_newest_first"
+        const val PLAY_FAVORITES_ONLY = "play_favorites_only"
         const val SHOW_PREVIEW_DETAILS = "show_preview_details"
         const val FADE = "fade"
         const val SLIDE = "slide"
         const val CUT = "cut"
-        const val ORDER_NAME = "name"
         const val ORDER_DATE_TIME = "date_time"
         const val ORDER_RANDOM = "random"
         private const val SCREENSAVER_COMPONENTS = "screensaver_components"

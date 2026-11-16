@@ -25,6 +25,7 @@ class PhotoDream : DreamService() {
     private lateinit var imageViews: Array<ImageView>
     private lateinit var info: TextView
     private lateinit var status: TextView
+    private lateinit var clock: PhotoClock
     private var visibleImage = 0
 
     override fun onAttachedToWindow() {
@@ -46,6 +47,7 @@ class PhotoDream : DreamService() {
             setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.START
         }
+        clock = PhotoClock(this, mainHandler)
         status = TextView(this).apply {
             setTextColor(0xFFBBBBBB.toInt())
             textSize = 22f
@@ -62,6 +64,12 @@ class PhotoDream : DreamService() {
                     setMargins(dp(40), 0, dp(40), dp(32))
                 }
             )
+            addView(
+                clock.view,
+                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.RIGHT).apply {
+                    setMargins(0, dp(24), dp(32), 0)
+                }
+            )
         }
         setContentView(content)
     }
@@ -69,6 +77,7 @@ class PhotoDream : DreamService() {
     override fun onDreamingStarted() {
         super.onDreamingStarted()
         isRunning = true
+        clock.start()
         worker = Executors.newSingleThreadExecutor()
 
         if (!hasPhotoPermission()) {
@@ -85,25 +94,32 @@ class PhotoDream : DreamService() {
         }
 
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val sortOrder = when (preferences.getString(SettingsActivity.PHOTO_ORDER, SettingsActivity.ORDER_NAME)) {
-            SettingsActivity.ORDER_DATE_TIME -> PhotoSortOrder.DATE_TIME
-            SettingsActivity.ORDER_RANDOM -> PhotoSortOrder.RANDOM
-            else -> PhotoSortOrder.NAME
+        val sortOrder = if (
+            preferences.getString(SettingsActivity.PHOTO_ORDER, SettingsActivity.ORDER_DATE_TIME) ==
+            SettingsActivity.ORDER_RANDOM
+        ) {
+            PhotoSortOrder.RANDOM
+        } else {
+            PhotoSortOrder.DATE_TIME
         }
-        val newestFirst = preferences.getBoolean(SettingsActivity.DATE_NEWEST_FIRST, true)
         worker?.execute {
             val found = PhotoFiles.listImages(folder)
+            val favoritesOnly = preferences.getBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
+            val favorites = PhotoFavorites.load(preferences)
+            val candidates = if (favoritesOnly) PhotoFavorites.filter(found, favorites) else found
             val ordered = PhotoFiles.sortImages(
-                found,
+                candidates,
                 sortOrder,
-                newestFirst,
-                PhotoMetadata::captureTimeMillis
+                newestFirst = true,
+                captureTime = PhotoMetadata::captureTimeMillis
             )
             mainHandler.post {
                 if (!isRunning) return@post
                 photos = ordered
                 if (photos.isEmpty()) {
-                    status.setText(R.string.no_photos_found)
+                    status.setText(
+                        if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
+                    )
                 } else {
                     nextPhoto = 0
                     showNextPhoto()
@@ -113,11 +129,13 @@ class PhotoDream : DreamService() {
     }
 
     override fun onDreamingStopped() {
+        if (::clock.isInitialized) clock.stop()
         stopSlideshow()
         super.onDreamingStopped()
     }
 
     override fun onDetachedFromWindow() {
+        if (::clock.isInitialized) clock.stop()
         stopSlideshow()
         super.onDetachedFromWindow()
     }
@@ -206,9 +224,9 @@ class PhotoDream : DreamService() {
     }
 
     private fun scheduleNext() {
-        val seconds = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-            .getInt(SettingsActivity.INTERVAL_SECONDS, 30)
-            .coerceIn(5, 300)
+        val seconds = SlideshowSpeed.normalize(
+            getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        ).intervalSeconds
         mainHandler.postDelayed({ showNextPhoto() }, seconds * 1000L)
     }
 

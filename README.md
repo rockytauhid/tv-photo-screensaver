@@ -5,12 +5,37 @@ A screensaver for older Android TVs that shows your own photos: from local stora
 
 First target: Sony BRAVIA KD-55X9500D, Android 8.0 (API 26), about 1.5 GB RAM, no keyboard or touch.
 Status: **local slideshow and gallery implemented.** It browses local/USB folders, shows supported photos with a
-configurable interval, transition, and order, displays available EXIF details, and provides an on-demand thumbnail
-grid and full-screen detail preview for large folders. It builds, but has not been installed or verified on the TV.
+configurable speed, shuffle, and transition style, displays available EXIF details, and provides an on-demand thumbnail
+grid and full-screen detail preview for large folders. It builds and has been tested on an Android TV emulator, but
+has not been installed or verified on the physical TV.
 Decoded slideshow and preview images adapt to the screen size within a heap-based bitmap budget. 4K/8K images may
 be sampled down on devices without enough memory and can look softer; this has not been visually tested on 4K/8K
 hardware.
-Settings can launch an immediate in-app slideshow or open Android's screensaver settings to select Photo Dream.
+`test-data/sample-photos` contains 30 generated fixtures. The latest six cover landscape and portrait variants of
+3:2, 4:3, and 16:9 aspect ratios at mixed resolutions.
+The app opens directly to the photo gallery with a Photo Dream launcher icon. Its header shows the photo count at the
+same scale as the actions, a Favorites/All filter icon, play-slideshow and Settings icons on the right. The filter
+choice is saved and shared with the slideshow. The gallery provides compact shortcuts for years and months that
+contain photos, lazy thumbnail loading for large folders, square thumbnails in a three-row viewport, and the focused
+photo's date and location at the bottom of the screen. Its three-row square thumbnail grid scrolls horizontally,
+decodes at twice the rendered pixel size, and keeps only a bounded thumbnail cache. Favorites becomes the default
+filter when favorites exist unless the user has selected All.
+The remote Options key opens a screen-specific, semi-transparent panel that slides in from the right and covers the
+rightmost quarter of the screen while dimming the background. Its actions are smaller, text-only, and use title case;
+Gallery offers screensaver selection, Preview controls details and favorite status, and Slideshow controls details,
+the all/favorite photo set, speed, shuffle, and transition style. Focused actions and icons are yellow; the active date
+shortcuts are larger, bold, and white. The slideshow's Favorites/All, play/pause, and Settings controls move up and
+fade away after three seconds, and return when a remote button is pressed. Selecting the play icon or pressing Play on
+the remote starts at the
+highlighted gallery photo. Settings slides in as a solid half-width panel over the dimmed screen and controls the
+Android screensaver's speed, transition style, shuffle, and all-photos/favorites source. Slow, Medium, and Fast
+use 3, 8, and 15 seconds respectively. The slideshow can be paused with the remote and resumed with Play; Back
+returns to the gallery with the last displayed photo highlighted. With Shuffle off, photos are always newest first
+(random order remains configurable). The slideshow shows the selected photo's date and location in the same bottom
+positions and format as the gallery, with its clock at the upper left. The system screensaver clock remains upper
+right. A Settings icon is available in the top-right corner of the gallery, preview, and slideshow screens.
+The Preview screen's play icon starts the slideshow at the previewed photo; Back returns to Gallery with the last
+displayed photo highlighted.
 
 ## Why
 
@@ -21,7 +46,8 @@ on that TV.
 ## Handoff: state and next steps (read this first in a new session)
 
 **Done**
-- Local photo slideshow and D-pad settings/folder picker are implemented. The app has not yet been installed on the TV.
+- Local photo slideshow, gallery-first launch, D-pad settings panel and folder picker are implemented. The app has
+  not yet been installed on the physical TV.
 - TV tooling and cleanyourtv rules are captured in [docs/CONTEXT.md](docs/CONTEXT.md).
 - The TV (Sony KD-55X9500D, Android 8.0) already runs the cleanyourtv launcher; its ADB is **closed** (developer options
   off). To test, the owner must re-enable Developer options > USB debugging and Network debugging, and we close ADB
@@ -72,9 +98,9 @@ the same as cleanyourtv, so a cached build is fast.
 
 ```
 app/src/main/java/com/photodream/tv/PhotoDream.kt     the DreamService and sampled photo slideshow
-app/src/main/java/com/photodream/tv/SettingsActivity.kt     D-pad settings screen
+app/src/main/java/com/photodream/tv/SettingsActivity.kt     D-pad settings side panel
 app/src/main/java/com/photodream/tv/FolderPickerActivity.kt     local and USB folder browser
-app/src/main/java/com/photodream/tv/GalleryActivity.kt     on-demand thumbnail gallery for large folders
+app/src/main/java/com/photodream/tv/GalleryActivity.kt     launcher and on-demand thumbnail gallery for large folders
 app/src/main/java/com/photodream/tv/PhotoPreviewActivity.kt     full-screen photo preview and metadata panel
 app/src/main/java/com/photodream/tv/SlideshowActivity.kt     manually launched immersive slideshow
 app/src/main/AndroidManifest.xml                      dream service, photo permissions, leanback features

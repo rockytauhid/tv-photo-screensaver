@@ -1,8 +1,8 @@
 # Design notes
 
-Status: the local slideshow and settings screen are implemented, but not yet tested on the TV. Nothing here has
-been tested on the TV except where it says "measured". Statements marked **verify** come from memory of vendor
-documentation and must be checked against the current docs before code depends on them: cloud APIs change often.
+Status: the local slideshow and gallery/settings UI are implemented and tested on an Android TV emulator, but not on
+the physical TV. Physical-TV measurements are marked "measured"; statements marked **verify** come from memory of
+vendor documentation and must be checked against the current docs before code depends on them.
 
 ## Goal
 
@@ -36,8 +36,8 @@ PhotoDream (DreamService)
        -> PhotoSource    one interface, many implementations
        -> ImageLoader    sampled decode, EXIF rotation, small LRU of bitmaps, disk cache
        -> Renderer       two ImageViews + crossfade (alpha animation only), optional slow zoom
-SettingsActivity         D-pad friendly screen to add sources and set interval, order, transition
-LauncherActivity         optional: a leanback tile so the settings open from Home
+GalleryActivity          leanback launcher, item count, thumbnail grid, slideshow and settings controls
+SettingsActivity         D-pad settings panel that slides in over the dimmed gallery
 ```
 
 `PhotoSource` (sketch):
@@ -130,12 +130,12 @@ Rules for cloud code:
 
 ## Settings and distribution
 
-- Settings screen: add/remove sources, folder browser, interval (5 s to 5 min), order (random, by date, by name),
-  transition (cut, fade), clock overlay (off, small), test button ("show now").
+- Settings screen: add/remove sources, folder browser, speed presets (Slow 3 s, Medium 8 s, Fast 15 s),
+  shuffle on/off, transition style (cut, fade, slide), clock overlay (off, small), test button ("show now").
 - A `DreamService` can point to a settings activity through `android:settingsActivity` and a
   `<meta-data android:name="android.service.dream">` XML resource. Whether the Sony's Settings app shows a gear is
-  **unverified**, so also add a leanback launcher activity (`android.intent.category.LEANBACK_LAUNCHER`) so the
-  settings open from the cleanyourtv Home.
+  **unverified**, so expose `GalleryActivity` through `android.intent.category.LEANBACK_LAUNCHER`; the gallery and
+  its settings panel are then available from Home.
 - Distribution: a sideloaded APK over ADB, debug-signed, like the launcher. Publishing on Google Play is a separate
   decision (it needs a developer account, a privacy policy and cloud API verification).
 - Licence: undecided. If cleanyourtv code is copied (for example `ClockDream.java`), keep its MIT notice.
@@ -156,10 +156,10 @@ Rules for cloud code:
 |---|---|---|
 | 0 | Skeleton | `PhotoDream` builds, is listed under Screen saver and starts on the TV. **The code scaffold builds; not yet installed.** |
 | 1 | Local slideshow | Reads supported photos recursively from a selected internal/USB folder; images are sampled to at most 1920x1080 and transitions support cut, fade and slide. Implemented; TV playback and long-run memory are not yet verified. |
-| 2 | Settings and gallery | D-pad folder browser, 5-second-step interval from 5 to 300 seconds, metadata toggle, transition/order selection, virtualized thumbnail gallery and full-screen detail preview. Implemented; TV navigation and 10,000-photo responsiveness are not yet verified on hardware. |
+| 2 | Settings and gallery | D-pad folder browser, 3/8/15-second speed presets, shuffle and transition-style selection, metadata toggle, virtualized thumbnail gallery and full-screen detail preview. Implemented; TV navigation and 10,000-photo responsiveness are not yet verified on hardware. |
 | 3 | WebDAV, then SMB | A NAS share plays; offline NAS falls back cleanly. |
 | 4 | Cloud (one service) | OneDrive device-flow sign-in, thumbnails, token stored encrypted. Then Dropbox. |
-| 5 | Polish | Clock overlay, Ken Burns if the GPU copes, caching limits, translations. |
+| 5 | Polish | Ken Burns if the GPU copes, caching limits, translations. |
 
 ## Decisions (from the owner)
 
@@ -181,19 +181,49 @@ Rules for cloud code:
 - The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes to a maximum
   of 1920x1080, reads EXIF date, GPS coordinates, camera make/model, exposure, aperture, ISO and focal length when
   present, and gracefully skips unreadable files.
-- Interval settings range from 5 to 300 seconds in 5-second steps. Transitions are cut, crossfade and horizontal
-  slide. Metadata visibility can be toggled as a group.
-- Settings also open a D-pad photo gallery. It virtualizes the grid, decodes 256x144 thumbnails off the UI thread,
-  bounds concurrent decode work and caches only a small LRU of thumbnails; browsing does not change the slideshow's
-  folder-wide photo set.
-- Slideshow order is configurable by name, capture date/time, or random per run. Date order supports newest-first
-  and oldest-first; photos without EXIF capture time use filesystem modification time.
-- Selecting a gallery thumbnail opens a sampled full-screen preview with a right-side details panel. The panel is
-  hidden by default, configurable in settings, and toggled with its D-pad button or the remote's Info key.
-- Gallery sorting cycles through filename A–Z, filename Z–A, capture time oldest-first and newest-first; the
-  preview uses that same order and wraps left/right at both ends.
+- Speed presets map Slow, Medium and Fast to 3, 8 and 15 seconds. Shuffle toggles random ordering; when off,
+  photos are shown newest first. Styles are cut, crossfade and horizontal slide. Metadata visibility can be toggled
+  as a group.
+- The app opens to a D-pad photo gallery with an item count and Favorites/All, play-slideshow and Settings icons in
+  its header. Favorites/All is a persisted filter shared with the manual slideshow.
+  Settings slides in from the right as a solid half-width panel while the gallery remains visible and dimmed behind it.
+  The grid shows three rows of square, virtualized thumbnails and scrolls horizontally. Thumbnails decode off the UI
+  thread at up to twice their rendered pixel size, with bounded decode work and a small LRU cache. The focused
+  thumbnail's capture date and GPS location, when available, appear at the bottom left and right of the gallery
+  screen; filenames and metadata overlays are not shown on thumbnails.
+- The horizontal grid uses `androidx.leanback:leanback:1.0.0` (Apache-2.0) and its RecyclerView support rather than
+  constructing a view for every photo. The Leanback AAR is 1.36 MB; the debug APK grew by 1.91 MB (from 936,925 to
+  2,843,704 bytes). Its photo-view memory remains bounded to the visible/recycled cells; the existing thumbnail LRU
+  remains capped at 6 MB.
+- Shuffle toggles random ordering per run; with Shuffle off, photos are always newest-first by capture date/time.
+  Photos without EXIF capture time use filesystem modification time.
+- Favorites are stored by photo path. The gallery starts in Favorites when the selected folder contains any unless
+  the user has persisted All; its header filter is disabled when the folder contains none. Available years and months
+  are based on the active set.
+- The Settings activity controls the system DreamService's speed preset, transition style, shuffle and all-photos or
+  favorites-only source through shared preferences. Android system settings still select Photo Dream and control
+  when the dream starts. The DreamService is non-interactive, so its Options key is not available while it runs.
+- Selecting a gallery thumbnail opens a sampled full-screen preview with a right-side details panel. The remote
+  Options/Menu key opens a shared right-quarter panel that slides in from the right; preview actions show/hide details
+  or add/remove the current photo from Favorites.
+- Gallery, Preview, and manual slideshow have screen-specific Options/Menu panels with the same right-quarter
+  slide-in layout, translucent dark panel, and dimmed background. Their actions are smaller, title-case text; focused actions and
+  icons are yellow. Gallery offers screensaver selection, Preview shows the details On/Off control and favorite
+  action, and Slideshow controls details, the all/favorite photo set, speed, shuffle and style. The slideshow's
+  date/location footer matches the gallery and its clock is at the upper left. Settings icons align at the top-right
+  in all app screens. Active year/month shortcuts are larger, bold, and white. The manual slideshow's Favorites/All,
+  play/pause, and Settings controls animate upward and fade away after three seconds; any remote key shows them again.
+- Starting the manual slideshow from the gallery's play icon or remote Play key begins with the highlighted photo
+  when it belongs to the configured slideshow photo set.
+- The Preview screen's play icon starts the manual slideshow from that photo. Returning from Preview or its
+  slideshow forwards the selected or last-displayed path to Gallery.
+- The remote Pause key and the on-screen playback icon pause/resume the manual slideshow. Back returns to the gallery
+  and highlights the last photo displayed.
+- When a selected photo's previous or next thumbnail is outside the visible grid, a narrow cropped preview at that
+  screen edge cues the adjacent image. These two previews use the same bounded background thumbnail loader/cache.
 - Thumbnails show a loading label while decoding and a "No preview" placeholder for unreadable images. The
   full-screen preview shows the failed filename and metadata, and left/right navigation remains available.
+- The app-owned slideshow clock is in the upper-left corner; the system DreamService clock remains upper-right.
 - Pixel Motion Photos and other photos with embedded motion clips currently display only their still image;
   embedded video playback is not implemented.
 - Settings can launch an immediate app-owned full-screen slideshow using the configured interval, transition and
@@ -208,7 +238,8 @@ Rules for cloud code:
   native 1080p images; lower-resolution screens avoid unnecessary decoding. 4K/8K images can be decoded at higher
   resolutions only when the device heap allows it; otherwise they are sampled down and upscaled, which can look
   softer. Image sampling uses powers of two, so it may choose a smaller bitmap than the budget would otherwise allow.
-- Gallery thumbnails scale with display density up to 512x288 and remain in the existing bounded LRU cache.
+- Gallery thumbnails are square, scale with display density up to 512x512 and remain in the existing bounded LRU
+  cache.
 - The target hardware has only been measured at 1920x1080 output. 720p, native 4K and 8K rendering have not been
   visually tested on hardware.
 

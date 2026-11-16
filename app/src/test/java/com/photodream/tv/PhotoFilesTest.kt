@@ -3,6 +3,7 @@ package com.photodream.tv
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File
+import java.util.GregorianCalendar
 
 class PhotoFilesTest {
     @Test
@@ -25,10 +26,10 @@ class PhotoFilesTest {
             }
 
             assertEquals(
-                listOf("b.JPG", "photo.webp", "still.gif", "sub/a.png"),
+                setOf("b.JPG", "photo.webp", "still.gif", "sub/a.png"),
                 PhotoFiles.listImages(root).map {
                     it.relativeTo(root).path.replace(File.separatorChar, '/')
-                }
+                }.toSet()
             )
         } finally {
             root.deleteRecursively()
@@ -41,46 +42,56 @@ class PhotoFilesTest {
     }
 
     @Test
-    fun sortsByNameWithoutCaseSensitivity() {
-        val photos = listOf(File("zeta.jpg"), File("Alpha.jpg"), File("beta.jpg"))
+    fun timelineExposesOnlyAvailableYearsAndMonthsAndFiltersPhotos() {
+        val photos = listOf(
+            File("january-early.jpg"),
+            File("march.jpg"),
+            File("january-late.jpg"),
+            File("previous-year.jpg")
+        )
+        val captureTimes = mapOf(
+            "january-early.jpg" to timestamp(2024, 1, 2),
+            "march.jpg" to timestamp(2024, 3, 10),
+            "january-late.jpg" to timestamp(2024, 1, 20),
+            "previous-year.jpg" to timestamp(2022, 8, 1)
+        )
+        val timeline = PhotoFiles.buildTimeline(photos) { captureTimes.getValue(it.name) }
 
+        assertEquals(listOf(2024, 2022), timeline.years)
+        assertEquals(listOf(3, 1), timeline.monthsByYear[2024])
+        assertEquals(listOf(8), timeline.monthsByYear[2022])
         assertEquals(
-            listOf("Alpha.jpg", "beta.jpg", "zeta.jpg"),
-            PhotoFiles.sortImages(
-                photos,
-                PhotoSortOrder.NAME,
-                true,
-                captureTime = { 0L }
-            ).map { it.name }
+            listOf("january-late.jpg", "january-early.jpg"),
+            PhotoFiles.photosInTimeline(photos, timeline, 2024, 1, newestFirst = true).map { it.name }
         )
         assertEquals(
-            listOf("zeta.jpg", "beta.jpg", "Alpha.jpg"),
-            PhotoFiles.sortImages(
-                photos,
-                PhotoSortOrder.NAME,
-                true,
-                captureTime = { 0L },
-                namesAscending = false
-            )
-                .map { it.name }
+            listOf("january-early.jpg", "january-late.jpg", "march.jpg"),
+            PhotoFiles.photosInTimeline(photos, timeline, 2024, null, newestFirst = false).map { it.name }
         )
     }
 
     @Test
-    fun galleryDateSortSupportsOldestAndNewestFirst() {
-        val photos = listOf(File("middle.jpg"), File("old.jpg"), File("new.jpg"))
-        val captureTimes = mapOf("old.jpg" to 10L, "middle.jpg" to 20L, "new.jpg" to 30L)
-        val captureTime: (File) -> Long = { captureTimes.getValue(it.name) }
-
-        assertEquals(
-            listOf("old.jpg", "middle.jpg", "new.jpg"),
-            PhotoFiles.sortGalleryImages(photos, GallerySortOrder.DATE_OLDEST_FIRST, captureTime)
-                .map { it.name }
+    fun subsetTimelineContainsOnlyDatesPresentInTheSubset() {
+        val photos = listOf(File("new-year.jpg"), File("old-year.jpg"))
+        val captureTimes = mapOf(
+            "new-year.jpg" to timestamp(2024, 3, 10),
+            "old-year.jpg" to timestamp(2022, 8, 1)
         )
+        val fullTimeline = PhotoFiles.buildTimeline(photos) { captureTimes.getValue(it.name) }
+
+        val favoritesTimeline = PhotoFiles.subsetTimeline(photos.take(1), fullTimeline)
+
+        assertEquals(listOf(2024), favoritesTimeline.years)
+        assertEquals(listOf(3), favoritesTimeline.monthsByYear[2024])
         assertEquals(
-            listOf("new.jpg", "middle.jpg", "old.jpg"),
-            PhotoFiles.sortGalleryImages(photos, GallerySortOrder.DATE_NEWEST_FIRST, captureTime)
-                .map { it.name }
+            listOf("new-year.jpg"),
+            PhotoFiles.photosInTimeline(
+                photos,
+                favoritesTimeline,
+                year = null,
+                month = null,
+                newestFirst = true
+            ).map { it.name }
         )
     }
 
@@ -141,4 +152,7 @@ class PhotoFilesTest {
         temporaryFile.mkdir()
         return temporaryFile
     }
+
+    private fun timestamp(year: Int, month: Int, day: Int): Long =
+        GregorianCalendar(year, month - 1, day, 12, 0).timeInMillis
 }

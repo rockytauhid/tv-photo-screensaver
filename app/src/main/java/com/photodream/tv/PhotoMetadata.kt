@@ -24,6 +24,9 @@ internal object PhotoMetadata {
             ?: file.lastModified()
     }
 
+    fun location(file: File): String? =
+        readExif(file)?.let(::location)
+
     fun details(context: Context, file: File, includeName: Boolean = false): String {
         val lines = ArrayList<String>()
         if (includeName) lines.add(context.getString(R.string.photo_name, file.name))
@@ -42,15 +45,7 @@ internal object PhotoMetadata {
 
         if (exif == null) return lines.joinToString("\n")
 
-        val coordinates = FloatArray(2)
-        if (exif.getLatLong(coordinates)) {
-            lines.add(
-                context.getString(
-                    R.string.photo_location,
-                    String.format(Locale.US, "%.4f, %.4f", coordinates[0], coordinates[1])
-                )
-            )
-        }
+        location(exif)?.let { lines.add(context.getString(R.string.photo_location, it)) }
         val camera = listOfNotNull(
             exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
             exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty)
@@ -64,6 +59,12 @@ internal object PhotoMetadata {
         exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let { cameraSettings.add("${it}mm") }
         if (cameraSettings.isNotEmpty()) lines.add(cameraSettings.joinToString("  "))
         return lines.joinToString("\n")
+    }
+
+    private fun location(exif: ExifInterface): String? {
+        val coordinates = FloatArray(2)
+        if (!exif.getLatLong(coordinates)) return null
+        return String.format(Locale.US, "%.4f, %.4f", coordinates[0], coordinates[1])
     }
 
     private fun readExif(file: File): ExifInterface? =
