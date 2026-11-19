@@ -20,7 +20,7 @@ storage. Kotlin (standard library only until a dependency is justified), `minSdk
   no wake locks.
 - **No telemetry, analytics, ads or Firebase.** Network only to servers the person configures.
 - **Read-only cloud scopes**, refresh tokens encrypted with the Android Keystore, never logged.
-- **No secrets or identifiers in the repo:** no IP addresses, Wi-Fi names, emails, serial numbers, passwords, OAuth
+- **No secrets or identifiers in the repo:** no IP addresses, Wi-Fi names, emails (except the owner's copyright contact in README.md), serial numbers, passwords, OAuth
   client secrets, tokens, ADB keys. Use `<tv ip>` or `192.168.1.50`. `secrets.properties`, keystores, `backup/`,
   `shots/` and `work/` are git-ignored; keep them that way.
 - **Do not add dependencies** without writing down in `docs/DESIGN.md` what they cost (APK size, heap, licence) and

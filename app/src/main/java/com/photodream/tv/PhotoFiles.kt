@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import java.io.File
@@ -126,6 +129,21 @@ internal object PhotoFiles {
         return datedPhotos.sortedWith(comparator).map { it.first }
     }
 
+    /**
+     * Index of the first photo in [photos] that was taken in [year] (and [month] when given), or -1.
+     * With photos sorted newest first, that is the newest photo of the period.
+     */
+    fun indexOfFirstInPeriod(
+        photos: List<File>,
+        timeline: PhotoTimeline,
+        year: Int,
+        month: Int?
+    ): Int =
+        photos.indexOfFirst { photo ->
+            val date = timeline.datesByPath[photo.absolutePath]
+            date != null && date.year == year && (month == null || date.month == month)
+        }
+
     fun sortImages(
         photos: List<File>,
         order: PhotoSortOrder,
@@ -144,6 +162,16 @@ internal object PhotoFiles {
             }
             PhotoSortOrder.RANDOM -> photos.shuffled()
         }
+    }
+
+    /**
+     * Where the screensaver should continue: the photo after the one it showed last, wrapping to the
+     * start. Starts at the first photo when nothing is remembered or that photo is no longer in the list.
+     */
+    fun resumeIndex(photos: List<File>, lastShownPath: String?): Int {
+        if (photos.isEmpty() || lastShownPath == null) return 0
+        val lastIndex = photos.indexOfFirst { it.absolutePath == lastShownPath }
+        return if (lastIndex < 0) 0 else (lastIndex + 1) % photos.size
     }
 
     fun wrapIndex(currentIndex: Int, delta: Int, size: Int): Int {

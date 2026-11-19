@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import org.junit.Assert.assertEquals
@@ -93,6 +96,39 @@ class PhotoFilesTest {
                 newestFirst = true
             ).map { it.name }
         )
+    }
+
+    @Test
+    fun findsTheNewestPhotoOfAYearOrMonthInANewestFirstList() {
+        val newestFirst = listOf(
+            File("mar-2024.jpg"),
+            File("jan-late-2024.jpg"),
+            File("jan-early-2024.jpg"),
+            File("aug-2022.jpg")
+        )
+        val captureTimes = mapOf(
+            "mar-2024.jpg" to timestamp(2024, 3, 10),
+            "jan-late-2024.jpg" to timestamp(2024, 1, 20),
+            "jan-early-2024.jpg" to timestamp(2024, 1, 2),
+            "aug-2022.jpg" to timestamp(2022, 8, 1)
+        )
+        val timeline = PhotoFiles.buildTimeline(newestFirst) { captureTimes.getValue(it.name) }
+
+        assertEquals(0, PhotoFiles.indexOfFirstInPeriod(newestFirst, timeline, 2024, null))
+        assertEquals(1, PhotoFiles.indexOfFirstInPeriod(newestFirst, timeline, 2024, 1))
+        assertEquals(3, PhotoFiles.indexOfFirstInPeriod(newestFirst, timeline, 2022, null))
+        assertEquals(-1, PhotoFiles.indexOfFirstInPeriod(newestFirst, timeline, 2024, 5))
+    }
+
+    @Test
+    fun resumesAfterTheLastShownPhoto() {
+        val photos = listOf(File("a.jpg"), File("b.jpg"), File("c.jpg"))
+
+        assertEquals(2, PhotoFiles.resumeIndex(photos, File("b.jpg").absolutePath))
+        assertEquals(0, PhotoFiles.resumeIndex(photos, File("c.jpg").absolutePath))
+        assertEquals(0, PhotoFiles.resumeIndex(photos, File("gone.jpg").absolutePath))
+        assertEquals(0, PhotoFiles.resumeIndex(photos, null))
+        assertEquals(0, PhotoFiles.resumeIndex(emptyList(), "x"))
     }
 
     @Test

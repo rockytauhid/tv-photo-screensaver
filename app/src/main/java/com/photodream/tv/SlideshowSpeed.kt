@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.content.SharedPreferences
@@ -6,9 +9,9 @@ internal enum class SlideshowSpeed(
     val intervalSeconds: Int,
     val labelRes: Int
 ) {
-    SLOW(3, R.string.speed_slow),
+    SLOW(15, R.string.speed_slow),
     MEDIUM(8, R.string.speed_medium),
-    FAST(15, R.string.speed_fast);
+    FAST(3, R.string.speed_fast);
 
     fun next(): SlideshowSpeed = when (this) {
         SLOW -> MEDIUM
@@ -18,9 +21,9 @@ internal enum class SlideshowSpeed(
 
     companion object {
         fun fromIntervalSeconds(seconds: Int): SlideshowSpeed = when {
-            seconds < 6 -> SLOW
+            seconds < 6 -> FAST
             seconds < 12 -> MEDIUM
-            else -> FAST
+            else -> SLOW
         }
 
         fun normalize(preferences: SharedPreferences): SlideshowSpeed {

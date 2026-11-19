@@ -1,11 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -16,7 +22,6 @@ import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -27,6 +32,10 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
+/**
+ * Full-screen slideshow with no on-screen buttons: the photo is the hero. Remote keys:
+ * Left/Right previous/next photo, Play/Pause (or OK) pause and resume, Back returns to the gallery.
+ */
 class SlideshowActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var worker: ThreadPoolExecutor? = null
@@ -35,30 +44,19 @@ class SlideshowActivity : Activity() {
     private var isRunning = false
     private var isPaused = false
     private var photos: List<File> = emptyList()
-    private var allPhotos: List<File> = emptyList()
     private var nextPhoto = 0
     private var currentPhotoIndex = -1
     private var displayedPhotoIndex = -1
     private var initialPhotoPath: String? = null
     private var displayGeneration = 0
     private lateinit var imageViews: Array<ImageView>
-    private lateinit var metadataFooter: LinearLayout
     private lateinit var dateLabel: TextView
     private lateinit var locationLabel: TextView
     private lateinit var status: TextView
     private lateinit var clock: PhotoClock
-    private lateinit var topControls: LinearLayout
-    private lateinit var photoSetButton: ImageButton
-    private lateinit var playbackButton: ImageButton
-    private lateinit var settingsButton: ImageButton
-    private lateinit var optionsOverlay: RightOptionsOverlay
-    private lateinit var detailsOptionButton: TextView
-    private lateinit var showPhotoSetOptionButton: TextView
-    private lateinit var speedOptionButton: TextView
-    private lateinit var shuffleOptionButton: TextView
-    private lateinit var styleOptionButton: TextView
+    private lateinit var pauseIndicator: ImageView
+    private lateinit var locationLoader: PhotoLocationLoader
     private var visibleImage = 0
-    private val controlsHideRunnable = Runnable { hideTopControls() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,155 +88,60 @@ class SlideshowActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        metadataFooter = LinearLayout(this).apply {
+        val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), 0, dp(20), 0)
-            visibility = View.GONE
             addView(dateLabel, LinearLayout.LayoutParams(0, -1, 1f))
             addView(locationLabel, LinearLayout.LayoutParams(0, -1, 1f))
         }
         clock = PhotoClock(this, mainHandler, Gravity.START)
+        locationLoader = PhotoLocationLoader(this, mainHandler)
         status = TextView(this).apply {
             setTextColor(0xFFBBBBBB.toInt())
             textSize = 22f
             gravity = Gravity.CENTER
         }
-        optionsOverlay = RightOptionsOverlay(this)
-        optionsOverlay.onDismissed = {
-            settingsButton.requestFocus()
-            scheduleControlsAutoHide()
+        pauseIndicator = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(36), dp(36), dp(36), dp(36))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x99000000.toInt())
+                setStroke(dp(3), Color.WHITE)
+            }
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
         }
-        detailsOptionButton = optionsOverlay.addAction("") { toggleMetadata() }
-        showPhotoSetOptionButton = optionsOverlay.addAction("") { togglePhotoSet() }
-        speedOptionButton = optionsOverlay.addAction("") { cycleSpeed() }
-        shuffleOptionButton = optionsOverlay.addAction("") { toggleShuffle() }
-        styleOptionButton = optionsOverlay.addAction("") { cycleTransition() }
-        optionsOverlay.addBottomAction(getString(R.string.options_close)) { closeOptions() }
         val content = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(imageViews[0], FrameLayout.LayoutParams(-1, -1))
             addView(imageViews[1], FrameLayout.LayoutParams(-1, -1))
             addView(status, FrameLayout.LayoutParams(-1, -1))
-            addView(
-                metadataFooter,
-                FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM)
-            )
+            addView(footer, FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM))
             addView(
                 clock.view,
                 FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.LEFT).apply {
                     setMargins(dp(20), dp(12), 0, 0)
                 }
             )
-            topControls = LinearLayout(this@SlideshowActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            photoSetButton = createIconButton(
-                R.drawable.ic_favorite,
-                getString(R.string.gallery_filter_show_favorites)
-            ) {
-                togglePhotoSet()
-            }
-            topControls.addView(
-                photoSetButton,
-                LinearLayout.LayoutParams(dp(48), dp(48))
-            )
-            playbackButton = createIconButton(
-                R.drawable.ic_pause,
-                getString(R.string.pause_slideshow)
-            ) {
-                togglePlayback()
-            }
-            topControls.addView(
-                playbackButton,
-                LinearLayout.LayoutParams(dp(48), dp(48))
-            )
-            settingsButton = createIconButton(
-                R.drawable.ic_settings,
-                getString(R.string.settings_button)
-            ) {
-                startActivity(android.content.Intent(this@SlideshowActivity, SettingsActivity::class.java))
-            }
-            topControls.addView(
-                settingsButton,
-                LinearLayout.LayoutParams(dp(48), dp(48))
-            )
             addView(
-                topControls,
-                FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.RIGHT).apply {
-                    setMargins(0, dp(12), dp(20), 0)
-                }
+                pauseIndicator,
+                FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER)
             )
-            addView(optionsOverlay.view, FrameLayout.LayoutParams(-1, -1))
         }
         setContentView(content)
-        updatePlaybackButton()
-        updateSlideshowOptionsLabels()
-    }
-
-    private fun togglePhotoSet() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val favoritesOnly = preferences.getBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
-        val favoritePaths = PhotoFavorites.load(preferences)
-        if (!favoritesOnly && allPhotos.none { it.absolutePath in favoritePaths }) return
-
-        preferences.edit().putBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, !favoritesOnly).apply()
-        val currentPath = photos.getOrNull(displayedPhotoIndex)?.absolutePath
-            ?: photos.getOrNull(currentPhotoIndex)?.absolutePath
-        val candidates = if (favoritesOnly) {
-            allPhotos
-        } else {
-            PhotoFavorites.filter(allPhotos, favoritePaths)
-        }
-        val sortOrder = if (
-            preferences.getString(SettingsActivity.PHOTO_ORDER, SettingsActivity.ORDER_DATE_TIME) ==
-            SettingsActivity.ORDER_RANDOM
-        ) {
-            PhotoSortOrder.RANDOM
-        } else {
-            PhotoSortOrder.DATE_TIME
-        }
-        photos = PhotoFiles.sortImages(
-            candidates,
-            sortOrder,
-            newestFirst = true,
-            captureTime = PhotoMetadata::captureTimeMillis
-        )
-        cancelScheduledNext()
-        val currentIndex = photos.indexOfFirst { it.absolutePath == currentPath }
-        if (currentIndex >= 0) {
-            currentPhotoIndex = currentIndex
-            displayedPhotoIndex = currentIndex
-            nextPhoto = (currentIndex + 1) % photos.size
-            if (!isPaused) scheduleNext()
-        } else if (photos.isNotEmpty()) {
-            currentPhotoIndex = -1
-            displayedPhotoIndex = -1
-            nextPhoto = 0
-            showPhotoAt(0)
-        } else {
-            currentPhotoIndex = -1
-            displayedPhotoIndex = -1
-            nextPhoto = 0
-            status.setText(R.string.no_favorite_photos)
-            status.visibility = View.VISIBLE
-            metadataFooter.visibility = View.GONE
-        }
-        updateSlideshowOptionsLabels()
     }
 
     override fun onResume() {
         super.onResume()
         clock.start()
-        settingsButton.requestFocus()
-        showTopControls()
         startSlideshow()
     }
 
     override fun onPause() {
         clock.stop()
-        mainHandler.removeCallbacks(controlsHideRunnable)
         initialPhotoPath =
             photos.getOrNull(displayedPhotoIndex)?.absolutePath ?: initialPhotoPath
         stopSlideshow(preserveCurrentPhoto = true)
@@ -251,9 +154,6 @@ class SlideshowActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            showTopControls()
-        }
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> {
@@ -264,7 +164,9 @@ class SlideshowActivity : Activity() {
                     setPlaybackPaused(false)
                     return true
                 }
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER -> {
                     togglePlayback()
                     return true
                 }
@@ -277,19 +179,6 @@ class SlideshowActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_BACK && event.repeatCount == 0) {
             returnToGallery()
             return true
-        }
-        if (event.repeatCount == 0 &&
-            (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS)
-        ) {
-            toggleOptions()
-            return true
-        }
-        if (optionsOverlay.isVisible) {
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
-            ) {
-                return true
-            }
         }
         val direction = when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> -1
@@ -353,9 +242,7 @@ class SlideshowActivity : Activity() {
             )
             mainHandler.post {
                 if (!isRunning) return@post
-                allPhotos = found
                 photos = ordered
-                updateSlideshowOptionsLabels()
                 if (photos.isEmpty()) {
                     status.setText(
                         if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
@@ -446,15 +333,15 @@ class SlideshowActivity : Activity() {
         status.visibility = View.GONE
 
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val showMetadata = preferences.getBoolean(SettingsActivity.SHOW_METADATA, true)
-        dateLabel.text = frame.date
-        locationLabel.text = frame.location
-        metadataFooter.visibility =
-            if (showMetadata && (frame.date.isNotEmpty() || frame.location.isNotEmpty())) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
+        val showDate = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        val showLocation = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
+        dateLabel.text = if (showDate) frame.date else ""
+        locationLabel.text = ""
+        if (showLocation) {
+            locationLoader.load(frame.file) { locationLabel.text = it.orEmpty() }
+        } else {
+            locationLoader.cancel()
+        }
         displayedPhotoIndex = currentPhotoIndex
 
         when (preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)) {
@@ -514,10 +401,10 @@ class SlideshowActivity : Activity() {
         mainHandler.removeCallbacksAndMessages(null)
         scheduledNext = null
         cancelPhotoLoad()
+        locationLoader.shutdown()
         worker?.shutdownNow()
         worker = null
         photos = emptyList()
-        allPhotos = emptyList()
         nextPhoto = 0
         currentPhotoIndex = -1
         displayedPhotoIndex = -1
@@ -541,62 +428,7 @@ class SlideshowActivity : Activity() {
 
     private fun decode(file: File): PhotoFrame? {
         val bitmap = PhotoImageDecoder.decodeForDisplay(this, file) ?: return null
-        val date = android.text.format.DateFormat.format(
-            "MMM dd, yyyy",
-            PhotoMetadata.captureTimeMillis(file)
-        ).toString()
-        val location = PhotoMetadata.location(file).orEmpty()
-        return PhotoFrame(bitmap, date, location, file.name)
-    }
-
-    private fun toggleOptions() {
-        if (optionsOverlay.isVisible) {
-            closeOptions()
-        } else {
-            mainHandler.removeCallbacks(controlsHideRunnable)
-            updateSlideshowOptionsLabels()
-            optionsOverlay.show(detailsOptionButton)
-        }
-    }
-
-    private fun closeOptions() {
-        optionsOverlay.hide()
-    }
-
-    private fun showTopControls() {
-        if (!::topControls.isInitialized) return
-        mainHandler.removeCallbacks(controlsHideRunnable)
-        topControls.animate().cancel()
-        if (topControls.visibility != View.VISIBLE) {
-            topControls.visibility = View.VISIBLE
-            topControls.translationY = -dp(64).toFloat()
-            topControls.alpha = 0f
-        }
-        topControls.animate()
-            .translationY(0f)
-            .alpha(1f)
-            .setDuration(250)
-            .start()
-        scheduleControlsAutoHide()
-    }
-
-    private fun hideTopControls() {
-        if (!::topControls.isInitialized || optionsOverlay.isVisible) return
-        topControls.animate().cancel()
-        topControls.animate()
-            .translationY(-dp(64).toFloat())
-            .alpha(0f)
-            .setDuration(650)
-            .withEndAction {
-                if (!optionsOverlay.isVisible) topControls.visibility = View.GONE
-            }
-            .start()
-    }
-
-    private fun scheduleControlsAutoHide() {
-        mainHandler.removeCallbacks(controlsHideRunnable)
-        if (!::topControls.isInitialized || optionsOverlay.isVisible) return
-        mainHandler.postDelayed(controlsHideRunnable, 3_000L)
+        return PhotoFrame(bitmap, PhotoMetadata.dateText(file), file, file.name)
     }
 
     private fun togglePlayback() {
@@ -627,17 +459,23 @@ class SlideshowActivity : Activity() {
                 showPhotoAt(nextPhoto.takeIf { it in photos.indices } ?: 0)
             }
         }
-        updatePlaybackButton()
+        showPlaybackIndicator(paused)
     }
 
-    private fun updatePlaybackButton() {
-        if (!::playbackButton.isInitialized) return
-        playbackButton.setImageResource(
-            if (isPaused) R.drawable.ic_play_arrow else R.drawable.ic_pause
-        )
-        playbackButton.contentDescription = getString(
-            if (isPaused) R.string.resume_slideshow else R.string.pause_slideshow
-        )
+    /** Big circled icon in the middle: a pause icon that stays while paused, a play icon that fades out. */
+    private fun showPlaybackIndicator(paused: Boolean) {
+        pauseIndicator.animate().cancel()
+        pauseIndicator.setImageResource(if (paused) R.drawable.ic_pause else R.drawable.ic_play_arrow)
+        pauseIndicator.visibility = View.VISIBLE
+        pauseIndicator.alpha = 1f
+        if (!paused) {
+            pauseIndicator.animate()
+                .alpha(0f)
+                .setStartDelay(1200)
+                .setDuration(1500)
+                .withEndAction { pauseIndicator.visibility = View.GONE }
+                .start()
+        }
     }
 
     private fun returnToGallery() {
@@ -647,142 +485,16 @@ class SlideshowActivity : Activity() {
         if (shownPhotoPath != null) {
             setResult(
                 RESULT_OK,
-                android.content.Intent().putExtra(SHOWN_PHOTO_PATH, shownPhotoPath)
+                Intent().putExtra(SHOWN_PHOTO_PATH, shownPhotoPath)
             )
         }
         finish()
     }
 
-    private fun updateSlideshowOptionsLabels() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val showMetadata = preferences.getBoolean(SettingsActivity.SHOW_METADATA, true)
-        detailsOptionButton.text = getString(
-            R.string.show_details_option,
-            getString(if (showMetadata) R.string.on else R.string.off)
-        )
-        val favoritePaths = PhotoFavorites.load(preferences)
-        val favoritesAvailable = allPhotos.any { it.absolutePath in favoritePaths }
-        val favoritesOnly = preferences.getBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
-        showPhotoSetOptionButton.text = getString(
-            R.string.slideshow_photo_set,
-            getString(if (favoritesOnly) R.string.show_favorite else R.string.show_all)
-        )
-        showPhotoSetOptionButton.isEnabled = favoritesOnly || favoritesAvailable
-        updatePhotoSetButton(favoritesOnly, favoritesAvailable)
-        val speed = SlideshowSpeed.normalize(preferences)
-        speedOptionButton.text = getString(R.string.speed_option, getString(speed.labelRes))
-        val shuffleEnabled = preferences.getString(
-            SettingsActivity.PHOTO_ORDER,
-            SettingsActivity.ORDER_DATE_TIME
-        ) == SettingsActivity.ORDER_RANDOM
-        shuffleOptionButton.text = getString(
-            R.string.shuffle_option,
-            getString(if (shuffleEnabled) R.string.on else R.string.off)
-        )
-        val transitionName = when (
-            preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)
-        ) {
-            SettingsActivity.SLIDE -> R.string.transition_slide
-            SettingsActivity.CUT -> R.string.transition_cut
-            else -> R.string.transition_fade
-        }
-
-        styleOptionButton.text = getString(
-            R.string.style_option,
-            getString(transitionName)
-        )
-    }
-
-    private fun updatePhotoSetButton(favoritesOnly: Boolean, favoritesAvailable: Boolean) {
-        if (!::photoSetButton.isInitialized) return
-        photoSetButton.setImageResource(
-            if (favoritesOnly) R.drawable.ic_view_all else R.drawable.ic_favorite
-        )
-        photoSetButton.contentDescription = getString(
-            if (favoritesOnly) {
-                R.string.gallery_filter_show_all
-            } else {
-                R.string.gallery_filter_show_favorites
-            }
-        )
-        photoSetButton.isEnabled = favoritesOnly || favoritesAvailable
-        photoSetButton.alpha = if (favoritesOnly || favoritesAvailable) 1f else 0.45f
-    }
-
-    private fun toggleMetadata() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val showMetadata = !preferences.getBoolean(SettingsActivity.SHOW_METADATA, true)
-        preferences.edit().putBoolean(SettingsActivity.SHOW_METADATA, showMetadata).apply()
-        metadataFooter.visibility = if (
-            showMetadata && (dateLabel.text.isNotEmpty() || locationLabel.text.isNotEmpty())
-        ) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
-        updateSlideshowOptionsLabels()
-    }
-
-    private fun cycleSpeed() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val nextSpeed = SlideshowSpeed.normalize(preferences).next()
-        preferences.edit().putInt(SettingsActivity.INTERVAL_SECONDS, nextSpeed.intervalSeconds).apply()
-        if (isRunning && photos.isNotEmpty()) scheduleNext()
-        updateSlideshowOptionsLabels()
-    }
-
-    private fun toggleShuffle() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val shuffleEnabled = preferences.getString(
-            SettingsActivity.PHOTO_ORDER,
-            SettingsActivity.ORDER_DATE_TIME
-        ) != SettingsActivity.ORDER_RANDOM
-        val nextOrder = if (shuffleEnabled) {
-            SettingsActivity.ORDER_RANDOM
-        } else {
-            SettingsActivity.ORDER_DATE_TIME
-        }
-        preferences.edit().putString(SettingsActivity.PHOTO_ORDER, nextOrder).apply()
-
-        val currentPhoto = photos.getOrNull(currentPhotoIndex)
-        val remainingPhotos = photos.filterIndexed { index, _ -> index != currentPhotoIndex }
-        val order = if (shuffleEnabled) PhotoSortOrder.RANDOM else PhotoSortOrder.DATE_TIME
-        val orderedRemaining = PhotoFiles.sortImages(
-            remainingPhotos,
-            order,
-            newestFirst = true,
-            captureTime = PhotoMetadata::captureTimeMillis
-        )
-        photos = if (currentPhoto == null) orderedRemaining else listOf(currentPhoto) + orderedRemaining
-        if (currentPhoto == null) {
-            currentPhotoIndex = -1
-            displayedPhotoIndex = -1
-            nextPhoto = 0
-        } else {
-            currentPhotoIndex = 0
-            displayedPhotoIndex = 0
-            nextPhoto = if (photos.size > 1) 1 else 0
-        }
-        updateSlideshowOptionsLabels()
-    }
-
-    private fun cycleTransition() {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val next = when (preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)) {
-            SettingsActivity.FADE -> SettingsActivity.SLIDE
-            SettingsActivity.SLIDE -> SettingsActivity.CUT
-            else -> SettingsActivity.FADE
-        }
-        preferences.edit().putString(SettingsActivity.TRANSITION, next).apply()
-        updateSlideshowOptionsLabels()
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private data class PhotoFrame(
+    private class PhotoFrame(
         val bitmap: Bitmap,
         val date: String,
-        val location: String,
+        val file: File,
         val photoName: String
     )
 

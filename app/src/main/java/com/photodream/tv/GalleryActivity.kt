@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.app.Activity
@@ -5,6 +8,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -43,8 +48,9 @@ class GalleryActivity : Activity() {
     private lateinit var startSlideshowButton: ImageButton
     private lateinit var settingsButton: ImageButton
     private lateinit var selectedDateLabel: TextView
-    private lateinit var selectedLocationLabel: TextView
     private lateinit var optionsOverlay: RightOptionsOverlay
+    private lateinit var dateOptionButton: TextView
+    private lateinit var locationOptionButton: TextView
     private lateinit var screensaverOptionButton: TextView
     private lateinit var shortcutsScroll: HorizontalScrollView
     private lateinit var dateShortcuts: LinearLayout
@@ -60,9 +66,13 @@ class GalleryActivity : Activity() {
     private var timeline: PhotoTimeline? = null
     private var favoritePaths: Set<String> = emptySet()
     private var favoritesOnly = false
-    private var selectedYear: Int? = null
-    private var selectedMonth: Int? = null
     private val newestFirst = true
+
+    /** Year and month of the highlighted photo; both shortcuts turn gold. */
+    private var highlightedDate: PhotoDate? = null
+
+    /** The one year whose months are shown in the shortcut row. */
+    private var expandedYear: Int? = null
     private var scanGeneration = 0
     private var reloadWhenResumed = false
     private var refreshFavoritesWhenResumed = false
@@ -86,6 +96,7 @@ class GalleryActivity : Activity() {
                         adapter.setHighlightedPosition(position)
                         updateEdgePreviews(position)
                         updateSelectedMetadata(position)
+                        onPhotoHighlighted(position)
                     } else {
                         adapter.setHighlightedPosition(-1)
                         updateEdgePreviews(-1)
@@ -217,6 +228,7 @@ class GalleryActivity : Activity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         header.addView(headerTitle, LinearLayout.LayoutParams(0, -2, 1f))
+        // Gold when only favorites are shown, white when all photos are shown.
         favoritesFilterButton = createIconButton(
             R.drawable.ic_favorite,
             getString(R.string.gallery_filter_show_favorites)
@@ -301,33 +313,24 @@ class GalleryActivity : Activity() {
         content.addView(galleryFrame, LinearLayout.LayoutParams(-1, dp(gridHeightDp)))
         root.addView(content, FrameLayout.LayoutParams(-1, -1))
 
-        val metadataFooter = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), 0, dp(20), 0)
-        }
+        // Only the date is shown here (bottom left); the location is left out to keep the grid snappy.
         selectedDateLabel = TextView(this).apply {
             textSize = 14f
             setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(20), 0, dp(20), 0)
         }
-        selectedLocationLabel = TextView(this).apply {
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            maxLines = 1
-            gravity = Gravity.RIGHT
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        metadataFooter.addView(selectedDateLabel, LinearLayout.LayoutParams(0, -1, 1f))
-        metadataFooter.addView(selectedLocationLabel, LinearLayout.LayoutParams(0, -1, 1f))
         root.addView(
-            metadataFooter,
+            selectedDateLabel,
             FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM)
         )
 
         optionsOverlay = RightOptionsOverlay(this)
         optionsOverlay.onDismissed = { grid.requestFocus() }
+        dateOptionButton = optionsOverlay.addAction("") { toggleShowDate() }
+        locationOptionButton = optionsOverlay.addAction("") { toggleShowLocation() }
         screensaverOptionButton = optionsOverlay.addAction(
             getString(R.string.set_as_screensaver)
         ) {
@@ -359,8 +362,6 @@ class GalleryActivity : Activity() {
             Intent(this, PhotoPreviewActivity::class.java)
                 .putExtra(PhotoPreviewActivity.PHOTO_PATH, adapter.getItem(position).absolutePath)
                 .putExtra(PhotoPreviewActivity.PHOTO_FOLDER, photoFolderPath)
-                .putExtra(PhotoPreviewActivity.PHOTO_YEAR, selectedYear ?: -1)
-                .putExtra(PhotoPreviewActivity.PHOTO_MONTH, selectedMonth ?: 0)
                 .putExtra(PhotoPreviewActivity.PHOTO_FAVORITES_ONLY, favoritesOnly),
             REQUEST_PREVIEW
         )
@@ -382,28 +383,22 @@ class GalleryActivity : Activity() {
     }
 
     private fun selectReturnedPhoto(path: String) {
-        var position = findPhotoPosition(path)
-        if (position < 0 && allPhotos.any { it.absolutePath == path }) {
-            if (favoritesOnly && path !in favoritePaths) {
-                favoritesOnly = false
-                getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
-                    .apply()
-                updateFavoritesFilterButton()
-            }
-            refreshActiveTimeline(preserveSelection = false)
-            allTimeline?.datesByPath?.get(path)?.let { date ->
-                selectedYear = date.year
-                selectedMonth = date.month
-            }
-            updateHeaderCount(activePhotoCount())
-            updateDateShortcuts()
-            showSelectedTimeline()
-            position = findPhotoPosition(path)
+        if (findPhotoPosition(path) < 0 &&
+            allPhotos.any { it.absolutePath == path } &&
+            favoritesOnly &&
+            path !in favoritePaths
+        ) {
+            favoritesOnly = false
+            getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
+                .apply()
+            updateFavoritesFilterButton()
+            applyFilter(path)
         }
+        val position = findPhotoPosition(path)
         if (position >= 0) {
-            grid.setSelectedPosition(position)
+            jumpTo(position, null)
             grid.requestFocus()
         }
     }
@@ -412,6 +407,11 @@ class GalleryActivity : Activity() {
         (0 until adapter.itemCount).firstOrNull {
             adapter.getItem(it).absolutePath == path
         } ?: -1
+
+    private fun currentPhotoPath(): String? =
+        grid.selectedPosition
+            .takeIf { it in 0 until adapter.itemCount }
+            ?.let { adapter.getItem(it).absolutePath }
 
     private fun updateEdgePreviews(selectedPosition: Int) {
         val count = adapter.itemCount
@@ -447,13 +447,13 @@ class GalleryActivity : Activity() {
         favoritePaths = emptySet()
         favoritesOnly = false
         selectedDateLabel.text = ""
-        selectedLocationLabel.text = ""
-        selectedYear = null
-        selectedMonth = null
+        highlightedDate = null
+        expandedYear = null
         photoFolderPath = null
         adapter.setPhotos(emptyList())
         updateEdgePreviews(-1)
         startSlideshowButton.isEnabled = false
+        updateFavoritesFilterButton()
         dateShortcuts.removeAllViews()
         shortcutsScroll.visibility = View.GONE
         status.visibility = View.VISIBLE
@@ -525,13 +525,13 @@ class GalleryActivity : Activity() {
             } else {
                 allPhotoTimeline
             }
-            val initialYear = activeTimeline.years.firstOrNull()
+            // The grid is one continuous timeline, newest first; the year and month shortcuts jump in it.
             val visiblePhotos = PhotoFiles.photosInTimeline(
                 activePhotos,
                 activeTimeline,
-                initialYear,
+                year = null,
                 month = null,
-                newestFirst
+                newestFirst = newestFirst
             )
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
@@ -541,51 +541,31 @@ class GalleryActivity : Activity() {
                 favoritePaths = initialFavoritePaths
                 favoritesOnly = showFavoritesOnly
                 updateFavoritesFilterButton()
-                selectedYear = initialYear
-                selectedMonth = null
                 adapter.setPhotos(visiblePhotos)
                 startSlideshowButton.isEnabled = foundPhotos.isNotEmpty()
                 updateHeaderCount(if (showFavoritesOnly) activePhotos.size else foundPhotos.size)
-                updateDateShortcuts()
                 status.visibility = if (foundPhotos.isEmpty()) View.VISIBLE else View.GONE
                 if (foundPhotos.isEmpty()) {
                     status.setText(R.string.gallery_no_photos)
+                    rebuildDateShortcuts()
                     settingsButton.requestFocus()
                 } else {
-                    grid.setSelectedPosition(0)
-                    updateEdgePreviews(0)
-                    updateSelectedMetadata(0)
+                    jumpTo(0, null)
                     grid.requestFocus()
                 }
             }
         }
     }
 
-    private fun selectYear(year: Int) {
-        selectedYear = year
-        selectedMonth = null
-        updateDateShortcuts("year-$year")
-        showSelectedTimeline()
-    }
-
-    private fun selectMonth(month: Int) {
-        selectedMonth = if (selectedMonth == month) null else month
-        updateDateShortcuts("month-$month")
-        showSelectedTimeline()
-    }
-
     private fun toggleFavoritesFilter() {
-        if (!hasFavoritesInFolder()) return
+        if (!favoritesOnly && !hasFavoritesInFolder()) return
         favoritesOnly = !favoritesOnly
         getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
             .edit()
             .putBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, favoritesOnly)
             .apply()
         updateFavoritesFilterButton()
-        refreshActiveTimeline(preserveSelection = false)
-        updateHeaderCount(activePhotoCount())
-        updateDateShortcuts("favorites")
-        showSelectedTimeline()
+        applyFilter(currentPhotoPath())
     }
 
     private fun refreshFavoriteFilter() {
@@ -606,109 +586,133 @@ class GalleryActivity : Activity() {
                 .apply()
         }
         updateFavoritesFilterButton()
-        refreshActiveTimeline(preserveSelection = true)
-        updateHeaderCount(activePhotoCount())
-        updateDateShortcuts()
-        showSelectedTimeline()
+        applyFilter(currentPhotoPath())
     }
 
-    private fun refreshActiveTimeline(preserveSelection: Boolean) {
-        val previousYear = selectedYear
-        val previousMonth = selectedMonth
+    /** Rebuilds the grid for the current All/Favorites filter and keeps [keepPath] highlighted if it is still shown. */
+    private fun applyFilter(keepPath: String?) {
         val fullTimeline = allTimeline ?: return
         val activePhotos = if (favoritesOnly) {
             PhotoFavorites.filter(allPhotos, favoritePaths)
         } else {
             allPhotos
         }
-        timeline = if (favoritesOnly) {
+        val activeTimeline = if (favoritesOnly) {
             PhotoFiles.subsetTimeline(activePhotos, fullTimeline)
         } else {
             fullTimeline
         }
-        selectedYear = if (
-            preserveSelection &&
-            previousYear != null &&
-            previousYear in timeline?.years.orEmpty()
-        ) {
-            previousYear
+        timeline = activeTimeline
+        val ordered = PhotoFiles.photosInTimeline(
+            activePhotos,
+            activeTimeline,
+            year = null,
+            month = null,
+            newestFirst = newestFirst
+        )
+        updateHeaderCount(activePhotos.size)
+        adapter.setPhotos(ordered)
+        highlightedDate = null
+        expandedYear = null
+        val index = keepPath
+            ?.let { path -> ordered.indexOfFirst { it.absolutePath == path } }
+            ?.takeIf { it >= 0 }
+            ?: 0
+        if (ordered.isEmpty()) {
+            rebuildDateShortcuts()
+            updateSelectedMetadata(-1)
+            updateEdgePreviews(-1)
         } else {
-            timeline?.years?.firstOrNull()
-        }
-        selectedMonth = if (
-            preserveSelection &&
-            previousMonth != null &&
-            previousMonth in timeline?.monthsByYear?.get(selectedYear).orEmpty()
-        ) {
-            previousMonth
-        } else {
-            null
+            jumpTo(index, null)
         }
     }
 
     private fun hasFavoritesInFolder(): Boolean =
         allPhotos.any { it.absolutePath in favoritePaths }
 
-    private fun activePhotoCount(): Int =
-        if (favoritesOnly) {
-            allPhotos.count { it.absolutePath in favoritePaths }
-        } else {
-            allPhotos.size
+    /** Selects [position] in the grid and updates the shortcuts without taking focus from the caller. */
+    private fun jumpTo(position: Int, focusTag: String?) {
+        if (position !in 0 until adapter.itemCount) return
+        val date = timeline?.datesByPath?.get(adapter.getItem(position).absolutePath)
+        if (date != null) {
+            highlightedDate = date
+            expandedYear = date.year
         }
-
-    private fun showSelectedTimeline() {
-        val currentTimeline = timeline ?: return
-        val activePhotos = if (favoritesOnly) {
-            PhotoFavorites.filter(allPhotos, favoritePaths)
-        } else {
-            allPhotos
-        }
-        adapter.setPhotos(
-            PhotoFiles.photosInTimeline(
-                activePhotos,
-                currentTimeline,
-                selectedYear,
-                selectedMonth,
-                newestFirst
-            )
-        )
-        grid.setSelectedPosition(0)
-        updateEdgePreviews(0)
-        updateSelectedMetadata(0)
+        rebuildDateShortcuts(focusTag)
+        grid.setSelectedPosition(position)
+        updateSelectedMetadata(position)
+        updateEdgePreviews(position)
     }
 
-    private fun updateDateShortcuts(focusTag: String? = null) {
+    /** Follows the highlighted photo: the shortcuts select its year and month and open its year. */
+    private fun onPhotoHighlighted(position: Int) {
+        val photo = adapter.getItem(position)
+        val date = timeline?.datesByPath?.get(photo.absolutePath) ?: return
+        val previous = highlightedDate
+        if (date == previous) return
+        highlightedDate = date
+        if (previous == null || date.year != previous.year) {
+            expandedYear = date.year
+            rebuildDateShortcuts()
+        } else {
+            updateShortcutSelection()
+        }
+    }
+
+    private fun onYearClicked(year: Int) {
+        if (year == highlightedDate?.year) {
+            // The year of the highlighted photo: collapse its months, or open them again.
+            expandedYear = if (expandedYear == year) null else year
+            rebuildDateShortcuts("year-$year")
+        } else {
+            val position = PhotoFiles.indexOfFirstInPeriod(
+                adapter.items(),
+                timeline ?: return,
+                year,
+                null
+            )
+            jumpTo(position, "year-$year")
+        }
+    }
+
+    private fun onMonthClicked(year: Int, month: Int) {
+        // Photos are newest first, so the first photo of a month is its last day.
+        val position = PhotoFiles.indexOfFirstInPeriod(
+            adapter.items(),
+            timeline ?: return,
+            year,
+            month
+        )
+        jumpTo(position, "month-$year-$month")
+    }
+
+    private fun rebuildDateShortcuts(focusTag: String? = null) {
         dateShortcuts.removeAllViews()
         val currentTimeline = timeline
-        val year = selectedYear
-        if (currentTimeline == null || year == null || currentTimeline.years.isEmpty()) {
-            shortcutsScroll.visibility = View.VISIBLE
+        if (currentTimeline == null || currentTimeline.years.isEmpty()) {
+            shortcutsScroll.visibility = View.GONE
             return
         }
-
-        currentTimeline.years.forEach { availableYear ->
-            val yearTag = "year-$availableYear"
+        currentTimeline.years.forEach { year ->
             dateShortcuts.addView(
-                createDateShortcut(yearTag, availableYear.toString(), availableYear == year) {
-                    selectYear(availableYear)
-                }
+                createDateShortcut("year-$year", year.toString()) { onYearClicked(year) }
             )
-            if (availableYear == year) {
-                currentTimeline.monthsByYear[availableYear].orEmpty().forEach { month ->
-                    val monthTag = "month-$month"
+            if (year == expandedYear) {
+                currentTimeline.monthsByYear[year].orEmpty().forEach { month ->
                     val monthName = DateFormatSymbols.getInstance().shortMonths
                         .getOrNull(month - 1)
                         ?.takeIf(String::isNotBlank)
                         ?: month.toString()
                     dateShortcuts.addView(
-                        createDateShortcut(monthTag, monthName, selectedMonth == month) {
-                            selectMonth(month)
+                        createDateShortcut("month-$year-$month", monthName) {
+                            onMonthClicked(year, month)
                         }
                     )
                 }
             }
         }
         shortcutsScroll.visibility = View.VISIBLE
+        updateShortcutSelection()
         if (focusTag != null) {
             shortcutsScroll.post {
                 dateShortcuts.findViewWithTag<View>(focusTag)?.requestFocus()
@@ -716,12 +720,51 @@ class GalleryActivity : Activity() {
         }
     }
 
+    private fun updateShortcutSelection() {
+        var selectedView: View? = null
+        for (index in 0 until dateShortcuts.childCount) {
+            val view = dateShortcuts.getChildAt(index) as? TextView ?: continue
+            styleShortcut(view)
+            if (isShortcutSelected(view)) selectedView = view
+        }
+        val target = selectedView ?: return
+        if (dateShortcuts.hasFocus()) return
+        shortcutsScroll.post {
+            val left = target.left
+            val right = target.right
+            if (left < shortcutsScroll.scrollX) {
+                shortcutsScroll.smoothScrollTo(left - dp(24), 0)
+            } else if (right > shortcutsScroll.scrollX + shortcutsScroll.width) {
+                shortcutsScroll.smoothScrollTo(right - shortcutsScroll.width + dp(24), 0)
+            }
+        }
+    }
+
+    private fun isShortcutSelected(view: TextView): Boolean {
+        val tag = view.tag as? String ?: return false
+        val date = highlightedDate ?: return false
+        return tag == "year-${date.year}" || tag == "month-${date.year}-${date.month}"
+    }
+
+    /** Gold when it matches the highlighted photo, underlined while it has focus. */
+    private fun styleShortcut(view: TextView) {
+        val selected = isShortcutSelected(view)
+        view.setTextColor(if (selected) GOLD_COLOR else 0xFFE0E0E0.toInt())
+        view.setTypeface(
+            null,
+            if (selected || view.hasFocus()) Typeface.BOLD else Typeface.NORMAL
+        )
+        view.paintFlags = if (view.hasFocus()) {
+            view.paintFlags or Paint.UNDERLINE_TEXT_FLAG
+        } else {
+            view.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv()
+        }
+    }
+
     private fun updateFavoritesFilterButton() {
         if (!::favoritesFilterButton.isInitialized) return
         val hasFavorites = hasFavoritesInFolder()
-        favoritesFilterButton.setImageResource(
-            if (favoritesOnly) R.drawable.ic_view_all else R.drawable.ic_favorite
-        )
+        favoritesFilterButton.setIconActive(favoritesOnly)
         favoritesFilterButton.contentDescription = getString(
             if (favoritesOnly) {
                 R.string.gallery_filter_show_all
@@ -736,36 +779,21 @@ class GalleryActivity : Activity() {
     private fun createDateShortcut(
         tag: String,
         label: String,
-        selected: Boolean,
         onClick: () -> Unit
     ): TextView =
         TextView(this).apply {
             this.tag = tag
             text = label
-            textSize = if (selected) 18f else 16f
+            textSize = 18f
             gravity = Gravity.CENTER
-            setTextColor(if (selected) Color.WHITE else 0xFFE0E0E0.toInt())
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setTextColor(0xFFE0E0E0.toInt())
+            setPadding(dp(10), dp(8), dp(10), dp(8))
             minHeight = dp(48)
             isFocusable = true
             isFocusableInTouchMode = true
             isClickable = true
             setBackgroundColor(Color.TRANSPARENT)
-            setOnFocusChangeListener { _, hasFocus ->
-                textSize = if (hasFocus || selected) 18f else 16f
-                setTextColor(
-                    when {
-                        hasFocus -> 0xFFFFC107.toInt()
-                        selected -> Color.WHITE
-                        else -> 0xFFE0E0E0.toInt()
-                    }
-                )
-                setTypeface(
-                    null,
-                    if (hasFocus || selected) android.graphics.Typeface.BOLD
-                    else android.graphics.Typeface.NORMAL
-                )
-            }
+            setOnFocusChangeListener { view, _ -> styleShortcut(view as TextView) }
             setOnClickListener { onClick() }
         }
 
@@ -789,23 +817,24 @@ class GalleryActivity : Activity() {
     private fun updateSelectedMetadata(position: Int) {
         if (!::adapter.isInitialized || !::selectedDateLabel.isInitialized) return
         val photo = if (position in 0 until adapter.itemCount) adapter.getItem(position) else null
-        if (photo == null) {
+        val showDate = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+            .getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        if (photo == null || !showDate) {
             selectedDateLabel.text = ""
-            selectedLocationLabel.text = ""
             return
         }
         val captureTime = timeline?.captureTimesByPath?.get(photo.absolutePath)
             ?: photo.lastModified()
         selectedDateLabel.text =
             android.text.format.DateFormat.format("MMM dd, yyyy", captureTime)
-        selectedLocationLabel.text = adapter.locationFor(photo.absolutePath).orEmpty()
     }
 
     private fun toggleOptions() {
         if (optionsOverlay.isVisible) {
             closeOptions()
         } else {
-            optionsOverlay.show(screensaverOptionButton)
+            updateOptionLabels()
+            optionsOverlay.show(dateOptionButton)
         }
     }
 
@@ -813,7 +842,33 @@ class GalleryActivity : Activity() {
         optionsOverlay.hide()
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun toggleShowDate() {
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val show = !preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        preferences.edit().putBoolean(SettingsActivity.SHOW_PHOTO_DATE, show).apply()
+        updateOptionLabels()
+        updateSelectedMetadata(grid.selectedPosition)
+    }
+
+    /** The gallery itself shows no location; this setting is shared with the preview and slideshow. */
+    private fun toggleShowLocation() {
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val show = !preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
+        preferences.edit().putBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, show).apply()
+        updateOptionLabels()
+    }
+
+    private fun updateOptionLabels() {
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        dateOptionButton.setToggleText(
+            getString(R.string.option_show_photo_date),
+            preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        )
+        locationOptionButton.setToggleText(
+            getString(R.string.option_show_photo_location),
+            preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
+        )
+    }
 
     private inner class GalleryAdapter : RecyclerView.Adapter<GalleryHolder>() {
         private val photos = ArrayList<File>()
@@ -824,7 +879,6 @@ class GalleryActivity : Activity() {
         private val thumbnailCache = object : LruCache<String, Bitmap>(cacheBytes) {
             override fun sizeOf(key: String, bitmap: Bitmap): Int = bitmap.byteCount
         }
-        private val locationCache = LruCache<String, String>(256)
         private val failedThumbnails = LinkedHashSet<String>()
         private val thumbnailExecutor = ThreadPoolExecutor(
             2,
@@ -847,6 +901,8 @@ class GalleryActivity : Activity() {
         override fun getItemCount(): Int = photos.size
 
         fun getItem(position: Int): File = photos[position]
+
+        fun items(): List<File> = photos
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): GalleryHolder =
             createHolder()
@@ -877,13 +933,11 @@ class GalleryActivity : Activity() {
                 cancel(holder)
                 holder.image.setImageBitmap(cached)
                 holder.placeholder.visibility = View.GONE
-                requestLocation(photo, holder)
             } else if (hasFailedThumbnail(key)) {
                 cancel(holder)
                 holder.image.setImageDrawable(null)
                 holder.placeholder.setText(R.string.gallery_thumbnail_unavailable)
                 holder.placeholder.visibility = View.VISIBLE
-                requestLocation(photo, holder)
             } else {
                 holder.image.setImageDrawable(null)
                 holder.placeholder.setText(R.string.gallery_thumbnail_loading)
@@ -928,8 +982,6 @@ class GalleryActivity : Activity() {
             }
         }
 
-        fun locationFor(path: String): String? = locationCache.get(path)
-
         fun bindEdgeThumbnail(position: Int, holder: GalleryHolder) {
             val photo = photos.getOrNull(position)
             if (photo == null) {
@@ -951,11 +1003,9 @@ class GalleryActivity : Activity() {
             if (cached != null) {
                 cancel(holder)
                 holder.image.setImageBitmap(cached)
-                requestLocation(photo, holder)
             } else if (hasFailedThumbnail(key)) {
                 cancel(holder)
                 holder.image.setImageDrawable(null)
-                requestLocation(photo, holder)
             } else if (holder.taskKey != key) {
                 holder.image.setImageDrawable(null)
                 val task = ThumbnailTask(key, photo, holder)
@@ -969,7 +1019,6 @@ class GalleryActivity : Activity() {
             closed = true
             thumbnailExecutor.shutdownNow().forEach { (it as? CancellableGalleryTask)?.cancel() }
             thumbnailCache.evictAll()
-            locationCache.evictAll()
             synchronized(failedThumbnails) { failedThumbnails.clear() }
         }
 
@@ -997,7 +1046,7 @@ class GalleryActivity : Activity() {
             val focusBorder = View(this@GalleryActivity).apply {
                 background = GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
-                    setStroke(dp(2), 0xFFFFC107.toInt())
+                    setStroke(dp(2), Color.WHITE)
                 }
                 visibility = View.GONE
                 isFocusable = false
@@ -1024,16 +1073,6 @@ class GalleryActivity : Activity() {
             }
             holder.task = null
             holder.taskKey = null
-        }
-
-        private fun requestLocation(file: File, holder: GalleryHolder) {
-            val key = file.absolutePath
-            if (locationCache.get(key) != null || holder.taskKey == key) return
-            cancel(holder)
-            val task = LocationTask(key, file, holder)
-            holder.task = task
-            holder.taskKey = key
-            thumbnailExecutor.execute(task)
         }
 
         private fun decodeThumbnail(file: File): Bitmap? =
@@ -1066,12 +1105,10 @@ class GalleryActivity : Activity() {
 
             override fun run() {
                 val bitmap = decodeThumbnail(file)
-                val location = PhotoMetadata.location(file).orEmpty()
                 if (cancelled || closed) {
                     bitmap?.recycle()
                     return
                 }
-                locationCache.put(key, location)
                 if (bitmap != null) {
                     thumbnailCache.put(key, bitmap)
                 } else {
@@ -1084,9 +1121,6 @@ class GalleryActivity : Activity() {
                         holder.taskKey = null
                     }
                     if (holder.boundKey == key && holder.image.tag == key) {
-                        if (holder.boundPosition == grid.selectedPosition) {
-                            updateSelectedMetadata(holder.boundPosition)
-                        }
                         if (bitmap != null) {
                             holder.image.setImageBitmap(bitmap)
                             holder.placeholder.visibility = View.GONE
@@ -1094,42 +1128,6 @@ class GalleryActivity : Activity() {
                             holder.placeholder.setText(R.string.gallery_thumbnail_unavailable)
                             holder.placeholder.visibility = View.VISIBLE
                         }
-                    }
-                }
-            }
-
-            override fun cancel() {
-                cancelled = true
-                if (holder.task === this) {
-                    holder.task = null
-                    holder.taskKey = null
-                }
-            }
-        }
-
-        private inner class LocationTask(
-            val key: String,
-            private val file: File,
-            private val holder: GalleryHolder
-        ) : CancellableGalleryTask {
-            @Volatile
-            private var cancelled = false
-
-            override fun run() {
-                val location = PhotoMetadata.location(file).orEmpty()
-                if (cancelled || closed) return
-                locationCache.put(key, location)
-                mainHandler.post {
-                    if (cancelled) return@post
-                    if (holder.task === this) {
-                        holder.task = null
-                        holder.taskKey = null
-                    }
-                    if (holder.boundKey == key &&
-                        holder.image.tag == key &&
-                        holder.boundPosition == grid.selectedPosition
-                    ) {
-                        updateSelectedMetadata(holder.boundPosition)
                     }
                 }
             }

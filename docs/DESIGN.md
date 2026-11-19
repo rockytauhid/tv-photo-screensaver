@@ -138,7 +138,8 @@ Rules for cloud code:
   its settings panel are then available from Home.
 - Distribution: a sideloaded APK over ADB, debug-signed, like the launcher. Publishing on Google Play is a separate
   decision (it needs a developer account, a privacy policy and cloud API verification).
-- Licence: undecided. If cleanyourtv code is copied (for example `ClockDream.java`), keep its MIT notice.
+- Licence: GPL-3.0-or-later, copyright Rocky Adam Tauhid. If cleanyourtv code is copied (for example
+  `ClockDream.java`), keep its MIT notice; MIT is compatible with the GPL.
 
 ## Testing
 

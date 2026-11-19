@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
-import android.content.Context
 import android.media.ExifInterface
 import android.text.format.DateFormat
 import java.io.File
@@ -24,47 +26,16 @@ internal object PhotoMetadata {
             ?: file.lastModified()
     }
 
-    fun location(file: File): String? =
-        readExif(file)?.let(::location)
+    /** The capture date as shown under a photo, for example "Mar 05, 2025". */
+    fun dateText(file: File): String =
+        DateFormat.format("MMM dd, yyyy", captureTimeMillis(file)).toString()
 
-    fun details(context: Context, file: File, includeName: Boolean = false): String {
-        val lines = ArrayList<String>()
-        if (includeName) lines.add(context.getString(R.string.photo_name, file.name))
-
-        val exif = readExif(file)
-        val date = exif?.let {
-            dateTags.asSequence()
-                .mapNotNull { tag -> it.getAttribute(tag) }
-                .firstOrNull()
-        }
-        val dateText = date
-            ?.replaceFirst(":", "-")
-            ?.replaceFirst(":", "-")
-            ?: DateFormat.format("yyyy-MM-dd HH:mm", file.lastModified()).toString()
-        lines.add(context.getString(R.string.photo_date, dateText))
-
-        if (exif == null) return lines.joinToString("\n")
-
-        location(exif)?.let { lines.add(context.getString(R.string.photo_location, it)) }
-        val camera = listOfNotNull(
-            exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()?.takeIf(String::isNotEmpty),
-            exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty)
-        ).distinct().joinToString(" ")
-        if (camera.isNotEmpty()) lines.add(context.getString(R.string.photo_camera, camera))
-
-        val cameraSettings = ArrayList<String>()
-        exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let { cameraSettings.add("${it}s") }
-        exif.getAttribute(ExifInterface.TAG_F_NUMBER)?.let { cameraSettings.add("f/$it") }
-        exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)?.let { cameraSettings.add("ISO $it") }
-        exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let { cameraSettings.add("${it}mm") }
-        if (cameraSettings.isNotEmpty()) lines.add(cameraSettings.joinToString("  "))
-        return lines.joinToString("\n")
-    }
-
-    private fun location(exif: ExifInterface): String? {
-        val coordinates = FloatArray(2)
-        if (!exif.getLatLong(coordinates)) return null
-        return String.format(Locale.US, "%.4f, %.4f", coordinates[0], coordinates[1])
+    /** Latitude and longitude from the photo's EXIF, or null when it has no GPS position. */
+    fun coordinates(file: File): DoubleArray? {
+        val exif = readExif(file) ?: return null
+        val result = FloatArray(2)
+        if (!exif.getLatLong(result)) return null
+        return doubleArrayOf(result[0].toDouble(), result[1].toDouble())
     }
 
     private fun readExif(file: File): ExifInterface? =

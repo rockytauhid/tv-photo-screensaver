@@ -5,37 +5,43 @@ A screensaver for older Android TVs that shows your own photos: from local stora
 
 First target: Sony BRAVIA KD-55X9500D, Android 8.0 (API 26), about 1.5 GB RAM, no keyboard or touch.
 Status: **local slideshow and gallery implemented.** It browses local/USB folders, shows supported photos with a
-configurable speed, shuffle, and transition style, displays available EXIF details, and provides an on-demand thumbnail
+configurable speed, shuffle, and transition style, shows the photo date and location, and provides an on-demand thumbnail
 grid and full-screen detail preview for large folders. It builds and has been tested on an Android TV emulator, but
 has not been installed or verified on the physical TV.
-Decoded slideshow and preview images adapt to the screen size within a heap-based bitmap budget. 4K/8K images may
-be sampled down on devices without enough memory and can look softer; this has not been visually tested on 4K/8K
-hardware.
+Decoded slideshow and preview images are kept at least as large as they are drawn (never upscaled) within a
+heap-based bitmap budget. 4K/8K images may be sampled down on devices without enough memory and can look softer;
+this has not been visually tested on 4K/8K hardware.
 `test-data/sample-photos` contains 30 generated fixtures. The latest six cover landscape and portrait variants of
 3:2, 4:3, and 16:9 aspect ratios at mixed resolutions.
-The app opens directly to the photo gallery with a Photo Dream launcher icon. Its header shows the photo count at the
-same scale as the actions, a Favorites/All filter icon, play-slideshow and Settings icons on the right. The filter
-choice is saved and shared with the slideshow. The gallery provides compact shortcuts for years and months that
-contain photos, lazy thumbnail loading for large folders, square thumbnails in a three-row viewport, and the focused
-photo's date and location at the bottom of the screen. Its three-row square thumbnail grid scrolls horizontally,
-decodes at twice the rendered pixel size, and keeps only a bounded thumbnail cache. Favorites becomes the default
-filter when favorites exist unless the user has selected All.
-The remote Options key opens a screen-specific, semi-transparent panel that slides in from the right and covers the
-rightmost quarter of the screen while dimming the background. Its actions are smaller, text-only, and use title case;
-Gallery offers screensaver selection, Preview controls details and favorite status, and Slideshow controls details,
-the all/favorite photo set, speed, shuffle, and transition style. Focused actions and icons are yellow; the active date
-shortcuts are larger, bold, and white. The slideshow's Favorites/All, play/pause, and Settings controls move up and
-fade away after three seconds, and return when a remote button is pressed. Selecting the play icon or pressing Play on
-the remote starts at the
-highlighted gallery photo. Settings slides in as a solid half-width panel over the dimmed screen and controls the
-Android screensaver's speed, transition style, shuffle, and all-photos/favorites source. Slow, Medium, and Fast
-use 3, 8, and 15 seconds respectively. The slideshow can be paused with the remote and resumed with Play; Back
-returns to the gallery with the last displayed photo highlighted. With Shuffle off, photos are always newest first
-(random order remains configurable). The slideshow shows the selected photo's date and location in the same bottom
-positions and format as the gallery, with its clock at the upper left. The system screensaver clock remains upper
-right. A Settings icon is available in the top-right corner of the gallery, preview, and slideshow screens.
-The Preview screen's play icon starts the slideshow at the previewed photo; Back returns to Gallery with the last
-displayed photo highlighted.
+The app opens directly to the photo gallery with a Photo Dream launcher icon. Gold is reserved for state: a
+favorite photo, an enabled option, and the year and month of the highlighted photo.
+
+- **Gallery:** the header shows the photo count, a favorite (star) icon, a play icon and a settings icon. The star
+  toggles between favorites only (gold) and all photos (white); the choice is saved and shared with the slideshow.
+  Highlighted icons get a circle. The three-row square thumbnail grid is one continuous timeline, newest first,
+  scrolls horizontally, decodes at twice the rendered size and keeps a bounded thumbnail cache. Only the photo date
+  is shown (bottom left); the location is left out to keep the grid snappy. The year and month shortcuts follow the
+  highlighted photo (both turn gold, and a focused shortcut is underlined). Selecting a year jumps to its newest
+  photo; selecting the highlighted year again collapses or expands its months, and only one year shows its months at
+  a time. Selecting a month jumps to its newest photo (the last day of that month).
+- **Preview:** full-screen photo with a favorite star (gold when the photo is a favorite), play and settings icons at
+  the top right (press Up to reach them, Down to return to the photo) and the date and location along the bottom.
+  Left/Right move through the photos.
+- **Slideshow:** no buttons, so the photo is the hero. Left/Right go to the previous/next photo, Play/Pause (or OK)
+  pauses and resumes, Back returns to the gallery with the last photo highlighted. Pausing shows a big circled pause
+  icon in the middle; resuming turns it into a circled play icon that fades away after a few seconds. The clock is
+  upper left, the system screensaver clock upper right. With Shuffle off, photos are newest first.
+- **Date and location:** the Options key (Menu) opens a panel with Show Photo Date and Show Photo Location in the
+  gallery and preview; the same two switches are in Settings. They apply to the gallery (date only), preview,
+  slideshow and screensaver. The location is the suburb and abbreviated country, for example `Indooroopilly, AU`,
+  looked up with Android's Geocoder and cached in the app so it still shows when the network is down. If no name
+  can be found the location is hidden. The app opens no network connection itself; the Geocoder uses the TV's
+  location backend, which some TVs do not have (then no location is shown).
+- **Option panels** (Options key, and Settings) are semi-transparent over a dimmed screen. Options are text only; the
+  highlighted one is circled and an enabled switch shows On in gold. Settings controls the screensaver's speed,
+  transition style, shuffle and all-photos/favorites source. Slow, Medium and Fast use 15, 8 and 3 seconds per photo.
+  With Shuffle off the screensaver continues after the last photo it showed, so a long run does not keep repeating
+  the newest photos.
 
 ## Why
 
@@ -57,7 +63,7 @@ on that TV.
 **Decisions**
 - Language: Kotlin, standard library only until a dependency is justified. `minSdk 26`.
 - Repository will be **public**: no secrets, IPs, Wi-Fi names, tokens or personal paths. Choose a licence before the
-  first push (done: MIT).
+  first push (done: GPL-3.0-or-later).
 - No NAS. The owner has a Windows PC running Plex Media Server, usable as a LAN source (Plex photo library, or an
   SMB share of a photo folder).
 - First cloud source: **OneDrive** (device-code flow, `Files.Read`, thumbnails). Other clouds come one at a time.
@@ -109,4 +115,12 @@ docs/                                                 context, design, deploymen
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). Code copied from cleanyourtv is also MIT; keep its notice.
+Photo Dream is free software under the GNU General Public License, version 3 or (at your option) any later
+version; see [LICENSE](LICENSE).
+
+Copyright (C) 2026 Rocky Adam Tauhid <rockytauhid@gmail.com>
+
+This program comes with ABSOLUTELY NO WARRANTY. Anyone who distributes it or a program based on it must do so
+under the same licence and provide the source code. Code copied from cleanyourtv is MIT licensed, which is
+compatible with the GPL; keep its copyright notice. The AndroidX and Leanback libraries are Apache-2.0, which is
+also compatible with GPL-3.0.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.content.Context
@@ -50,13 +53,7 @@ internal object PhotoImageDecoder {
             orientation == ExifInterface.ORIENTATION_ROTATE_270
         val width = if (swapsDimensions) bounds.outHeight else bounds.outWidth
         val height = if (swapsDimensions) bounds.outWidth else bounds.outHeight
-        var sampleSize = 1
-        while (width / sampleSize > maxWidth ||
-            height / sampleSize > maxHeight ||
-            (width / sampleSize).toLong() * (height / sampleSize).toLong() > maxPixels
-        ) {
-            sampleSize *= 2
-        }
+        val sampleSize = chooseSampleSize(width, height, maxWidth, maxHeight, maxPixels)
         val bitmap = BitmapFactory.decodeFile(
             file.absolutePath,
             BitmapFactory.Options().apply {
@@ -89,5 +86,31 @@ internal object PhotoImageDecoder {
         }
         if (rotated !== bitmap) bitmap.recycle()
         return rotated
+    }
+
+    /**
+     * The largest power-of-two sample size that still leaves the image at least as big as it is drawn
+     * (scaled to fit [maxWidth] x [maxHeight]), so photos are never upscaled and look sharp. A bigger
+     * size is used only when the decoded image would exceed [maxPixels].
+     */
+    fun chooseSampleSize(
+        width: Int,
+        height: Int,
+        maxWidth: Int,
+        maxHeight: Int,
+        maxPixels: Int = Int.MAX_VALUE
+    ): Int {
+        val fitScale = minOf(maxWidth.toDouble() / width, maxHeight.toDouble() / height)
+            .coerceAtMost(1.0)
+        val targetWidth = Math.ceil(width * fitScale).toInt()
+        val targetHeight = Math.ceil(height * fitScale).toInt()
+        var sampleSize = 1
+        while (width / (sampleSize * 2) >= targetWidth && height / (sampleSize * 2) >= targetHeight) {
+            sampleSize *= 2
+        }
+        while ((width / sampleSize).toLong() * (height / sampleSize).toLong() > maxPixels) {
+            sampleSize *= 2
+        }
+        return sampleSize
     }
 }

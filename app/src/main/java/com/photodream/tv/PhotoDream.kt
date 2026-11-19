@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.graphics.Bitmap
@@ -11,6 +14,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -22,10 +26,13 @@ class PhotoDream : DreamService() {
     private var isRunning = false
     private var photos: List<File> = emptyList()
     private var nextPhoto = 0
+    private var lastShownPath: String? = null
     private lateinit var imageViews: Array<ImageView>
-    private lateinit var info: TextView
+    private lateinit var dateLabel: TextView
+    private lateinit var locationLabel: TextView
     private lateinit var status: TextView
     private lateinit var clock: PhotoClock
+    private lateinit var locationLoader: PhotoLocationLoader
     private var visibleImage = 0
 
     override fun onAttachedToWindow() {
@@ -41,13 +48,16 @@ class PhotoDream : DreamService() {
                 setBackgroundColor(Color.BLACK)
             }
         }
-        info = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setShadowLayer(5f, 1f, 1f, Color.BLACK)
-            gravity = Gravity.START
+        dateLabel = footerLabel(Gravity.START)
+        locationLabel = footerLabel(Gravity.END)
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(dateLabel, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(locationLabel, LinearLayout.LayoutParams(0, -2, 1f))
         }
         clock = PhotoClock(this, mainHandler)
+        locationLoader = PhotoLocationLoader(this, mainHandler)
         status = TextView(this).apply {
             setTextColor(0xFFBBBBBB.toInt())
             textSize = 22f
@@ -59,7 +69,7 @@ class PhotoDream : DreamService() {
             addView(imageViews[1], FrameLayout.LayoutParams(-1, -1))
             addView(status, FrameLayout.LayoutParams(-1, -1))
             addView(
-                info,
+                footer,
                 FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
                     setMargins(dp(40), 0, dp(40), dp(32))
                 }
@@ -121,7 +131,16 @@ class PhotoDream : DreamService() {
                         if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
                     )
                 } else {
-                    nextPhoto = 0
+                    // Newest first continues where the last session stopped, so a long run does not
+                    // keep showing the same newest photos. Shuffle picks a fresh random order anyway.
+                    nextPhoto = if (sortOrder == PhotoSortOrder.DATE_TIME) {
+                        PhotoFiles.resumeIndex(
+                            photos,
+                            preferences.getString(SettingsActivity.DREAM_RESUME_PATH, null)
+                        )
+                    } else {
+                        0
+                    }
                     showNextPhoto()
                 }
             }
@@ -169,6 +188,7 @@ class PhotoDream : DreamService() {
                     return@post
                 }
                 present(frame)
+                lastShownPath = frame.file.absolutePath
                 scheduleNext()
             }
         }
@@ -190,9 +210,15 @@ class PhotoDream : DreamService() {
         status.visibility = View.GONE
 
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val showMetadata = preferences.getBoolean(SettingsActivity.SHOW_METADATA, true)
-        info.text = if (showMetadata) frame.metadata else ""
-        info.visibility = if (showMetadata && frame.metadata.isNotEmpty()) View.VISIBLE else View.GONE
+        val showDate = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        val showLocation = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
+        dateLabel.text = if (showDate) frame.date else ""
+        locationLabel.text = ""
+        if (showLocation) {
+            locationLoader.load(frame.file) { locationLabel.text = it.orEmpty() }
+        } else {
+            locationLoader.cancel()
+        }
 
         val transition = preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)
         when (transition) {
@@ -231,8 +257,16 @@ class PhotoDream : DreamService() {
     }
 
     private fun stopSlideshow() {
+        lastShownPath?.let {
+            getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putString(SettingsActivity.DREAM_RESUME_PATH, it)
+                .apply()
+        }
+        lastShownPath = null
         isRunning = false
         mainHandler.removeCallbacksAndMessages(null)
+        if (::locationLoader.isInitialized) locationLoader.shutdown()
         worker?.shutdownNow()
         worker = null
         photos = emptyList()
@@ -246,10 +280,18 @@ class PhotoDream : DreamService() {
 
     private fun decode(file: File): PhotoFrame? {
         val bitmap = PhotoImageDecoder.decodeForDisplay(this, file) ?: return null
-        return PhotoFrame(bitmap, PhotoMetadata.details(this, file))
+        return PhotoFrame(bitmap, PhotoMetadata.dateText(file), file)
     }
+
+    private fun footerLabel(gravity: Int): TextView =
+        TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            this.gravity = gravity
+        }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private data class PhotoFrame(val bitmap: Bitmap, val metadata: String)
+    private data class PhotoFrame(val bitmap: Bitmap, val date: String, val file: File)
 }

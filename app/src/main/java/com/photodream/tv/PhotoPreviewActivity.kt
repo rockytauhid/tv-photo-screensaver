@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Rocky Adam Tauhid
+
 package com.photodream.tv
 
 import android.app.Activity
@@ -15,7 +18,6 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
@@ -25,25 +27,29 @@ import java.util.concurrent.Future
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
+/**
+ * Full-screen preview of one photo. Left/Right move through the gallery's photos. Press Up to reach the
+ * icons at the top right (favorite, slideshow, settings) and Down to return to the photo.
+ */
 class PhotoPreviewActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var indexWorker: ExecutorService? = null
     private var imageWorker: ThreadPoolExecutor? = null
     private var imageLoadTask: Future<*>? = null
+    private lateinit var locationLoader: PhotoLocationLoader
     private lateinit var photo: File
+    private lateinit var contentRoot: FrameLayout
     private lateinit var image: ImageView
     private lateinit var status: TextView
+    private lateinit var topIcons: LinearLayout
+    private lateinit var favoriteButton: ImageButton
     private lateinit var playSlideshowButton: ImageButton
     private lateinit var settingsButton: ImageButton
-    private lateinit var detailsPanel: LinearLayout
-    private lateinit var detailsText: TextView
-    private lateinit var fileNameLabel: TextView
     private lateinit var dateLabel: TextView
     private lateinit var locationLabel: TextView
     private lateinit var optionsOverlay: RightOptionsOverlay
-    private lateinit var detailsOptionButton: TextView
-    private lateinit var favoriteOptionButton: TextView
-    private var detailsVisible = false
+    private lateinit var dateOptionButton: TextView
+    private lateinit var locationOptionButton: TextView
     private var optionsVisible = false
     private var favoritesOnly = false
     private var favoritePaths: Set<String> = emptySet()
@@ -53,8 +59,8 @@ class PhotoPreviewActivity : Activity() {
     private var pendingNavigation = 0
     private var displayGeneration = 0
     private var currentBitmap: Bitmap? = null
-    private var selectedYear: Int? = null
-    private var selectedMonth: Int? = null
+    private var currentDate = ""
+    private var currentLocation = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,15 +77,13 @@ class PhotoPreviewActivity : Activity() {
         }
         photo = File(path)
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        selectedYear = intent.getIntExtra(PHOTO_YEAR, -1).takeIf { it >= 0 }
-        selectedMonth = intent.getIntExtra(PHOTO_MONTH, 0).takeIf { it in 1..12 }
-        detailsVisible = preferences
-            .getBoolean(SettingsActivity.SHOW_PREVIEW_DETAILS, false)
         favoritesOnly = intent.getBooleanExtra(PHOTO_FAVORITES_ONLY, false)
         favoritePaths = PhotoFavorites.load(preferences)
+        locationLoader = PhotoLocationLoader(this, mainHandler)
         setContentView(createContentView())
-        updateDetailsVisibility()
-        settingsButton.requestFocus()
+        updateFavoriteButton()
+        updateOptionLabels()
+        contentRoot.requestFocus()
         imageWorker = ThreadPoolExecutor(
             1,
             1,
@@ -109,23 +113,32 @@ class PhotoPreviewActivity : Activity() {
             toggleOptions()
             return true
         }
-        if (optionsVisible && keyCode == KeyEvent.KEYCODE_BACK) {
-            closeOptions()
-            return true
+        if (optionsVisible) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                closeOptions()
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                return true
+            }
+            return super.onKeyDown(keyCode, event)
         }
-        if (optionsVisible &&
-            (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
-        ) {
-            return true
-        }
-        val direction = when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> -1
-            KeyEvent.KEYCODE_DPAD_RIGHT -> 1
-            else -> 0
-        }
-        if (direction != 0) {
-            movePhoto(direction)
-            return true
+        val onTopIcons = topIcons.hasFocus()
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                // On the icons, Left/Right move between them; otherwise they change the photo.
+                if (onTopIcons) return super.onKeyDown(keyCode, event)
+                movePhoto(if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1)
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_UP -> if (!onTopIcons) {
+                favoriteButton.requestFocus()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (onTopIcons) {
+                contentRoot.requestFocus()
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -154,19 +167,11 @@ class PhotoPreviewActivity : Activity() {
         finish()
     }
 
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_INFO) {
-            detailsVisible = !detailsVisible
-            updateDetailsVisibility()
-            return true
-        }
-        return super.onKeyUp(keyCode, event)
-    }
-
     override fun onDestroy() {
         indexWorker?.shutdownNow()
         cancelImageLoad()
         imageWorker?.shutdownNow()
+        if (::locationLoader.isInitialized) locationLoader.shutdown()
         if (::image.isInitialized) image.setImageDrawable(null)
         currentBitmap?.recycle()
         currentBitmap = null
@@ -174,69 +179,55 @@ class PhotoPreviewActivity : Activity() {
     }
 
     private fun createContentView(): View {
-        val content = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        contentRoot = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+        val content = contentRoot
         image = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             contentDescription = photo.name
         }
         content.addView(image, FrameLayout.LayoutParams(-1, -1))
+
+        favoriteButton = createIconButton(
+            R.drawable.ic_favorite,
+            getString(R.string.options_add_favorite)
+        ) {
+            toggleFavorite()
+        }
         playSlideshowButton = createIconButton(
             R.drawable.ic_play_arrow,
             getString(R.string.start_slideshow)
         ) {
             startSlideshowFromPhoto()
         }
-        content.addView(
-            playSlideshowButton,
-            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.RIGHT).apply {
-                setMargins(0, dp(12), dp(76), 0)
-            }
-        )
         settingsButton = createIconButton(
             R.drawable.ic_settings,
             getString(R.string.settings_button)
         ) {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        topIcons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            listOf(favoriteButton, playSlideshowButton, settingsButton).forEachIndexed { index, button ->
+                addView(
+                    button,
+                    LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                        if (index > 0) leftMargin = dp(8)
+                    }
+                )
+            }
+        }
         content.addView(
-            settingsButton,
-            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.RIGHT).apply {
+            topIcons,
+            FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.RIGHT).apply {
                 setMargins(0, dp(12), dp(20), 0)
             }
         )
 
-        detailsPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-            setBackgroundColor(0xC8000000.toInt())
-        }
-        detailsText = TextView(this).apply {
-            textSize = 17f
-            setTextColor(Color.WHITE)
-            setLineSpacing(dp(6).toFloat(), 1f)
-        }
-        detailsPanel.addView(
-            ScrollView(this).apply {
-                isFocusable = false
-                addView(detailsText)
-            },
-            LinearLayout.LayoutParams(-1, 0, 1f)
-        )
-        val panelWidth = (resources.displayMetrics.widthPixels / 4).coerceAtLeast(1)
-        content.addView(
-            detailsPanel,
-            FrameLayout.LayoutParams(panelWidth, -1, Gravity.RIGHT).apply {
-                bottomMargin = dp(36)
-            }
-        )
-
-        fileNameLabel = TextView(this).apply {
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
         dateLabel = TextView(this).apply {
             textSize = 14f
             setTextColor(Color.WHITE)
@@ -251,18 +242,14 @@ class PhotoPreviewActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        val metadataFooter = LinearLayout(this).apply {
+        val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), 0, dp(20), 0)
             addView(dateLabel, LinearLayout.LayoutParams(0, -1, 1f))
-            addView(fileNameLabel, LinearLayout.LayoutParams(0, -1, 1f))
             addView(locationLabel, LinearLayout.LayoutParams(0, -1, 1f))
         }
-        content.addView(
-            metadataFooter,
-            FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM)
-        )
+        content.addView(footer, FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM))
 
         status = TextView(this).apply {
             text = getString(R.string.gallery_scanning)
@@ -271,13 +258,14 @@ class PhotoPreviewActivity : Activity() {
             gravity = Gravity.CENTER
         }
         content.addView(status, FrameLayout.LayoutParams(-1, -1))
+
         optionsOverlay = RightOptionsOverlay(this)
         optionsOverlay.onDismissed = {
             optionsVisible = false
-            settingsButton.requestFocus()
+            contentRoot.requestFocus()
         }
-        detailsOptionButton = optionsOverlay.addAction("") { toggleDetailsFromOptions() }
-        favoriteOptionButton = optionsOverlay.addAction("") { toggleFavoriteFromOptions() }
+        dateOptionButton = optionsOverlay.addAction("") { toggleShowDate() }
+        locationOptionButton = optionsOverlay.addAction("") { toggleShowLocation() }
         optionsOverlay.addBottomAction(getString(R.string.options_close)) { closeOptions() }
         content.addView(optionsOverlay.view, FrameLayout.LayoutParams(-1, -1))
         return content
@@ -289,13 +277,13 @@ class PhotoPreviewActivity : Activity() {
         indexWorker?.execute {
             val initialPhoto = photo
             val bitmap = PhotoImageDecoder.decodeForDisplay(this, initialPhoto)
-            val metadata = previewMetadata(initialPhoto)
+            val date = PhotoMetadata.dateText(initialPhoto)
             mainHandler.post {
                 if (isFinishing || isDestroyed) {
                     bitmap?.recycle()
                     return@post
                 }
-                showPhoto(initialPhoto, bitmap, metadata)
+                showPhoto(initialPhoto, bitmap, date)
             }
 
             val folderPath = intent.getStringExtra(PHOTO_FOLDER)
@@ -309,8 +297,8 @@ class PhotoPreviewActivity : Activity() {
             val orderedPhotos = PhotoFiles.photosInTimeline(
                 navigationPhotos,
                 timeline,
-                selectedYear,
-                selectedMonth,
+                year = null,
+                month = null,
                 newestFirst = true
             )
             val selectedIndex = orderedPhotos.indexOfFirst { it.absolutePath == initialPhoto.absolutePath }
@@ -350,32 +338,23 @@ class PhotoPreviewActivity : Activity() {
         cancelImageLoad()
         imageLoadTask = imageWorker?.submit {
             val bitmap = PhotoImageDecoder.decodeForDisplay(this, file)
-            val metadata = previewMetadata(file)
+            val date = PhotoMetadata.dateText(file)
             mainHandler.post {
                 if (generation != displayGeneration || isFinishing || isDestroyed) {
                     bitmap?.recycle()
                     return@post
                 }
-                showPhoto(file, bitmap, metadata)
+                showPhoto(file, bitmap, date)
             }
         }
     }
 
-    private fun previewMetadata(file: File): PreviewMetadata = PreviewMetadata(
-        details = PhotoMetadata.details(this, file),
-        date = android.text.format.DateFormat.format(
-            "MMM dd, yyyy",
-            PhotoMetadata.captureTimeMillis(file)
-        ).toString(),
-        location = PhotoMetadata.location(file).orEmpty()
-    )
-
-    private fun showPhoto(file: File, bitmap: Bitmap?, metadata: PreviewMetadata) {
-        detailsText.text = metadata.details
-        fileNameLabel.text = file.name
-        dateLabel.text = metadata.date
-        locationLabel.text = metadata.location
-        updateOptionLabels()
+    private fun showPhoto(file: File, bitmap: Bitmap?, date: String) {
+        currentDate = date
+        currentLocation = ""
+        updateFooter()
+        refreshLocation()
+        updateFavoriteButton()
         if (bitmap == null) {
             status.text = getString(R.string.preview_photo_unavailable, file.name)
             status.visibility = View.VISIBLE
@@ -395,9 +374,29 @@ class PhotoPreviewActivity : Activity() {
         imageLoadTask = null
     }
 
-    private fun updateDetailsVisibility() {
-        detailsPanel.visibility = if (detailsVisible) View.VISIBLE else View.GONE
-        if (::detailsOptionButton.isInitialized) updateOptionLabels()
+    private fun showDate(): Boolean =
+        getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+            .getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+
+    private fun showLocation(): Boolean =
+        getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+            .getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
+
+    private fun updateFooter() {
+        dateLabel.text = if (showDate()) currentDate else ""
+        locationLabel.text = if (showLocation()) currentLocation else ""
+    }
+
+    /** Looks the location up in the background; the label stays empty when none can be found. */
+    private fun refreshLocation() {
+        if (!showLocation()) {
+            locationLoader.cancel()
+            return
+        }
+        locationLoader.load(photo) {
+            currentLocation = it.orEmpty()
+            updateFooter()
+        }
     }
 
     private fun toggleOptions() {
@@ -407,7 +406,7 @@ class PhotoPreviewActivity : Activity() {
         }
         optionsVisible = true
         updateOptionLabels()
-        optionsOverlay.show(detailsOptionButton)
+        optionsOverlay.show(dateOptionButton)
     }
 
     private fun closeOptions() {
@@ -416,49 +415,58 @@ class PhotoPreviewActivity : Activity() {
         optionsOverlay.hide()
     }
 
-    private fun toggleDetailsFromOptions() {
-        detailsVisible = !detailsVisible
-        updateDetailsVisibility()
-        closeOptions()
+    private fun toggleShowDate() {
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        preferences.edit()
+            .putBoolean(SettingsActivity.SHOW_PHOTO_DATE, !showDate())
+            .apply()
+        updateFooter()
+        updateOptionLabels()
     }
 
-    private fun toggleFavoriteFromOptions() {
+    private fun toggleShowLocation() {
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        preferences.edit()
+            .putBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, !showLocation())
+            .apply()
+        currentLocation = ""
+        updateFooter()
+        refreshLocation()
+        updateOptionLabels()
+    }
+
+    private fun toggleFavorite() {
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
         PhotoFavorites.toggle(preferences, photo)
         favoritePaths = PhotoFavorites.load(preferences)
-        updateOptionLabels()
-        closeOptions()
+        updateFavoriteButton()
+    }
+
+    private fun updateFavoriteButton() {
+        if (!::favoriteButton.isInitialized) return
+        val isFavorite = photo.absolutePath in favoritePaths
+        favoriteButton.setIconActive(isFavorite)
+        favoriteButton.contentDescription = getString(
+            if (isFavorite) R.string.options_remove_favorite else R.string.options_add_favorite
+        )
     }
 
     private fun updateOptionLabels() {
-        if (!::detailsOptionButton.isInitialized) return
-        detailsOptionButton.text = getString(
-            R.string.show_details_option,
-            getString(if (detailsVisible) R.string.on else R.string.off)
-        )
-        favoriteOptionButton.text = getString(
-            if (photo.absolutePath in favoritePaths) R.string.options_remove_favorite
-            else R.string.options_add_favorite
+        if (!::dateOptionButton.isInitialized) return
+        dateOptionButton.setToggleText(getString(R.string.option_show_photo_date), showDate())
+        locationOptionButton.setToggleText(
+            getString(R.string.option_show_photo_location),
+            showLocation()
         )
     }
 
     private fun isOptionsKey(keyCode: Int): Boolean =
         keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private data class PreviewMetadata(
-        val details: String,
-        val date: String,
-        val location: String
-    )
-
     companion object {
         private const val REQUEST_SLIDESHOW = 1
         const val PHOTO_PATH = "photo_path"
         const val PHOTO_FOLDER = "photo_folder"
-        const val PHOTO_YEAR = "photo_year"
-        const val PHOTO_MONTH = "photo_month"
         const val PHOTO_FAVORITES_ONLY = "photo_favorites_only"
     }
 }
