@@ -350,14 +350,13 @@ class PhotoPreviewActivity : Activity() {
             }
 
             val folderPath = intent.getStringExtra(PHOTO_FOLDER)
-            val entries = if (folderPath != null) {
-                val source = repository.localSource(folderPath)
-                source.loadCached().ifEmpty { source.refresh(emptyList()).entries }
+            val refs = if (folderPath != null) {
+                PhotoRepository.loadCachedOrRefresh(repository.localSource(folderPath))
             } else {
                 emptyList()
             }
-            val allPhotos = entries.map { File(it.path) }
-            val timeline = PhotoIndex.buildTimeline(entries)
+            val allPhotos = refs.map { File(it.id) }
+            val timeline = PhotoIndex.buildTimelineFromRefs(refs)
             val navigationPhotos = if (favoritesOnly) {
                 PhotoFavorites.filter(allPhotos, preferences.favoritePaths())
             } else {

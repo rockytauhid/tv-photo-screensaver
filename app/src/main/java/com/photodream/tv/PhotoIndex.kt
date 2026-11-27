@@ -149,6 +149,32 @@ internal object PhotoIndex {
         )
     }
 
+    fun buildTimelineFromRefs(refs: List<PhotoRef>): PhotoTimeline {
+        val datesById = LinkedHashMap<String, PhotoDate>(refs.size)
+        val captureTimesById = LinkedHashMap<String, Long>(refs.size)
+        val calendar = Calendar.getInstance()
+
+        refs.forEach { ref ->
+            calendar.timeInMillis = ref.captureTimeMillis
+            datesById[ref.id] = PhotoDate(
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH) + 1
+            )
+            captureTimesById[ref.id] = ref.captureTimeMillis
+        }
+
+        val monthsByYear = datesById.values
+            .groupBy(PhotoDate::year, PhotoDate::month)
+            .mapValues { (_, months) -> months.distinct().sortedDescending() }
+
+        return PhotoTimeline(
+            datesById,
+            captureTimesById,
+            monthsByYear.keys.sortedDescending(),
+            monthsByYear
+        )
+    }
+
     private fun parseEntry(line: String): IndexedPhoto? {
         val parts = line.split('\t', limit = 4)
         if (parts.size != 4) return null

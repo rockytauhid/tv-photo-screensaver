@@ -232,7 +232,7 @@ class GalleryActivity : Activity() {
         val horizontalEdge = dp(TV_HORIZONTAL_MARGIN_DP)
         val shortcutInnerPadding = dp(SHORTCUT_HORIZONTAL_PADDING_DP)
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0xFF101010.toInt())
+            setBackgroundColor(TvDesignTokens.background)
             clipChildren = false
             clipToPadding = false
         }
@@ -364,7 +364,7 @@ class GalleryActivity : Activity() {
         loadingOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(0xFF101010.toInt())
+            setBackgroundColor(TvDesignTokens.background)
             visibility = View.GONE
             addView(
                 ImageView(this@GalleryActivity).apply {
@@ -563,37 +563,29 @@ class GalleryActivity : Activity() {
         updateFavoritesFilterButton()
         dateShortcuts.removeAllViews()
         shortcutsScroll.visibility = View.GONE
-        galleryFrame.visibility = View.INVISIBLE
-        loadingOverlay.visibility = View.GONE
-        status.visibility = View.GONE
-        headerTitle.text = getString(R.string.app_name)
 
         val hasPermission = hasPhotoPermission()
         loadedWithPermission = hasPermission
         if (!hasPermission) {
-            status.setText(R.string.permission_required)
-            status.visibility = View.VISIBLE
-            settingsButton.requestFocus()
+            renderState(GalleryUiState.NeedsPermission)
             openSettingsOnFirstRun()
             return
         }
 
         val folderPath = preferences.photoFolder
         if (folderPath == null) {
-            status.setText(R.string.gallery_no_folder)
-            status.visibility = View.VISIBLE
-            settingsButton.requestFocus()
+            renderState(GalleryUiState.NeedsFolder)
             openSettingsOnFirstRun()
             return
         }
         photoFolderPath = folderPath
 
         val source = repository.localSource(folderPath)
-        val cachedEntries = source.loadCached()
-        if (cachedEntries.isNotEmpty()) {
-            applyLoadedEntries(cachedEntries, keepPath = null)
+        val cachedRefs = source.loadCached()
+        if (cachedRefs.isNotEmpty()) {
+            applyLoadedRefs(cachedRefs, keepPath = null)
         } else {
-            loadingOverlay.visibility = View.VISIBLE
+            renderState(GalleryUiState.Loading)
         }
 
         scanExecutor = ThreadPoolExecutor(
@@ -605,18 +597,65 @@ class GalleryActivity : Activity() {
             ThreadFactory { runnable -> Thread(runnable, "photo-index").apply { isDaemon = true } }
         )
         scanExecutor?.execute {
-            val refreshed = source.refresh(cachedEntries)
-            if (cachedEntries.isNotEmpty() && !refreshed.changed) return@execute
+            val refreshed = PhotoRepository.safeRefresh(source, cachedRefs)
+            if (cachedRefs.isNotEmpty() && !refreshed.changed) return@execute
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
-                applyLoadedEntries(refreshed.entries, keepPath = currentPhotoPath())
+                applyLoadedRefs(refreshed.items, keepPath = currentPhotoPath())
             }
         }
     }
 
-    private fun applyLoadedEntries(entries: List<IndexedPhoto>, keepPath: String?) {
-        val foundPhotos = entries.map { File(it.path) }
-        val allPhotoTimeline = PhotoIndex.buildTimeline(entries)
+    private fun renderState(state: GalleryUiState) {
+        when (state) {
+            GalleryUiState.NeedsPermission -> {
+                loadingOverlay.visibility = View.GONE
+                galleryFrame.visibility = View.INVISIBLE
+                status.setText(R.string.permission_required)
+                status.visibility = View.VISIBLE
+                startSlideshowButton.isEnabled = false
+                headerTitle.text = getString(R.string.app_name)
+                settingsButton.requestFocus()
+            }
+            GalleryUiState.NeedsFolder -> {
+                loadingOverlay.visibility = View.GONE
+                galleryFrame.visibility = View.INVISIBLE
+                status.setText(R.string.gallery_no_folder)
+                status.visibility = View.VISIBLE
+                startSlideshowButton.isEnabled = false
+                headerTitle.text = getString(R.string.app_name)
+                settingsButton.requestFocus()
+            }
+            GalleryUiState.Loading -> {
+                loadingOverlay.visibility = View.VISIBLE
+                galleryFrame.visibility = View.INVISIBLE
+                status.visibility = View.GONE
+                startSlideshowButton.isEnabled = false
+                headerTitle.text = getString(R.string.app_name)
+            }
+            GalleryUiState.Empty -> {
+                loadingOverlay.visibility = View.GONE
+                galleryFrame.visibility = View.INVISIBLE
+                status.setText(R.string.gallery_no_photos)
+                status.visibility = View.VISIBLE
+                startSlideshowButton.isEnabled = false
+                updateHeaderCount(0)
+                rebuildDateShortcuts()
+                settingsButton.requestFocus()
+            }
+            is GalleryUiState.Ready -> {
+                loadingOverlay.visibility = View.GONE
+                galleryFrame.visibility = View.VISIBLE
+                status.visibility = View.GONE
+                startSlideshowButton.isEnabled = true
+                updateHeaderCount(state.itemCount)
+            }
+        }
+    }
+
+    private fun applyLoadedRefs(refs: List<PhotoRef>, keepPath: String?) {
+        val foundPhotos = refs.map { File(it.id) }
+        val allPhotoTimeline = PhotoIndex.buildTimelineFromRefs(refs)
         val initialFavoritePaths = preferences.favoritePaths()
         val favoritesAvailable = foundPhotos.any { it.absolutePath in initialFavoritePaths }
         val showFavoritesOnly = (
@@ -650,7 +689,6 @@ class GalleryActivity : Activity() {
             month = null,
             newestFirst = newestFirst
         )
-        loadingOverlay.visibility = View.GONE
         allPhotos = foundPhotos
         allTimeline = allPhotoTimeline
         timeline = activeTimeline
@@ -658,15 +696,10 @@ class GalleryActivity : Activity() {
         favoritesOnly = showFavoritesOnly
         updateFavoritesFilterButton()
         adapter.setPhotos(visiblePhotos)
-        startSlideshowButton.isEnabled = foundPhotos.isNotEmpty()
-        updateHeaderCount(if (showFavoritesOnly) activePhotos.size else foundPhotos.size)
-        status.visibility = if (foundPhotos.isEmpty()) View.VISIBLE else View.GONE
-        galleryFrame.visibility = if (foundPhotos.isEmpty()) View.INVISIBLE else View.VISIBLE
         if (foundPhotos.isEmpty()) {
-            status.setText(R.string.gallery_no_photos)
-            rebuildDateShortcuts()
-            settingsButton.requestFocus()
+            renderState(GalleryUiState.Empty)
         } else {
+            renderState(GalleryUiState.Ready(if (showFavoritesOnly) activePhotos.size else foundPhotos.size))
             val targetIndex = keepPath
                 ?.let { path -> visiblePhotos.indexOfFirst { it.absolutePath == path } }
                 ?.takeIf { it >= 0 }
@@ -1316,6 +1349,14 @@ class GalleryActivity : Activity() {
 
     private interface CancellableGalleryTask : Runnable {
         fun cancel()
+    }
+
+    internal sealed interface GalleryUiState {
+        data object NeedsPermission : GalleryUiState
+        data object NeedsFolder : GalleryUiState
+        data object Loading : GalleryUiState
+        data object Empty : GalleryUiState
+        data class Ready(val itemCount: Int) : GalleryUiState
     }
 
     companion object {

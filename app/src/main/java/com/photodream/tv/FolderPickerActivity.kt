@@ -370,16 +370,16 @@ class FolderPickerActivity : Activity() {
         const val START_FOLDER = "start_folder"
         private const val STORAGE_ROOT = "/storage"
 
-        private const val BACKGROUND_COLOR = 0xFF101010.toInt()
-        private const val ROW_FILL_COLOR = 0xFF1A1A1A.toInt()
-        private const val FOCUSED_FILL_COLOR = 0xFF333333.toInt()
-        private const val DISABLED_FILL_COLOR = 0xFF151515.toInt()
-        private const val SUBTLE_BORDER_COLOR = 0xFF282828.toInt()
-        private const val DIVIDER_COLOR = 0xFF2A2A2A.toInt()
-        private const val ROW_TEXT_COLOR = 0xFFE6E6E6.toInt()
-        private const val SECONDARY_TEXT_COLOR = 0xFFBBBBBB.toInt()
-        private const val MUTED_TEXT_COLOR = 0xFF888888.toInt()
-        private const val DISABLED_TEXT_COLOR = 0xFF555555.toInt()
+        private val BACKGROUND_COLOR get() = TvDesignTokens.background
+        private val ROW_FILL_COLOR get() = TvDesignTokens.surfaceRow
+        private val FOCUSED_FILL_COLOR get() = TvDesignTokens.surfaceFocused
+        private val DISABLED_FILL_COLOR get() = TvDesignTokens.surfaceDisabled
+        private val SUBTLE_BORDER_COLOR get() = TvDesignTokens.borderSubtle
+        private val DIVIDER_COLOR get() = TvDesignTokens.divider
+        private val ROW_TEXT_COLOR get() = TvDesignTokens.textPrimary
+        private val SECONDARY_TEXT_COLOR get() = TvDesignTokens.textSecondary
+        private val MUTED_TEXT_COLOR get() = TvDesignTokens.textMuted
+        private val DISABLED_TEXT_COLOR get() = TvDesignTokens.textDisabled
 
         private val ignoredStorageRootNames = setOf("emulated", "self")
 

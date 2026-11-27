@@ -68,17 +68,17 @@ on that TV.
 - Language: Kotlin, standard library only until a dependency is justified. `minSdk 26`.
 - Repository will be **public**: no secrets, IPs, Wi-Fi names, tokens or personal paths. Choose a licence before the
   first push (done: GPL-3.0-or-later).
-- No NAS. The owner has a Windows PC running Plex Media Server, usable as a LAN source (Plex photo library, or an
-  SMB share of a photo folder).
-- First cloud source: **OneDrive** (device-code flow, `Files.Read`, thumbnails). Other clouds come one at a time.
+- Local-network sources come **before** online clouds: **Immich** (HTTP + API key + server-sized thumbnails, zero new
+  dependencies) and **SMB** (LAN photo shares), with Plex as an optional LAN source.
+- Online clouds come later (OneDrive, Google Drive, iCloud, and others as their APIs allow), one at a time.
 - Order: 1 local slideshow engine, 2 D-pad settings screen with its own folder browser (the TV has no DocumentsUI),
-  3 OneDrive, 4 Plex, 5 SMB/WebDAV and other clouds, 6 polish.
+  3 Local network (Immich, then SMB/WebDAV), 4 Online clouds (OneDrive and others), 5 polish.
 
-**Needed from the owner before OneDrive**
-1. A free Microsoft Entra app registration: public client, device-code flow enabled, delegated `Files.Read` and
-   `offline_access`. Its client id goes in a git-ignored `secrets.properties`, never in the repo.
-2. Personal or work/school account, and the photo folder (for example `Pictures`).
-3. Whether the photos are mostly HEIC (Android 8 cannot decode it).
+**Needed from the owner before Immich / SMB**
+1. For **Immich**: server LAN URL (e.g. `http://192.168.1.50:2283`), a read-only API key (entered/stored encrypted on
+   the TV, never committed), and whether to browse an album or the whole library.
+2. For **SMB**: share path (`\\<host>\<share>\<folder>`), whether guest or username/password auth is used, and
+   whether HEIC photos are present (Android 8 cannot decode HEIC natively; Immich server thumbnails avoid this).
 
 **Verify before coding:** every cloud and Plex API detail in `docs/DESIGN.md` is from memory.
 **Unverified on the TV:** how to start a dream on demand, whether the Settings app shows a gear for the dream, and

@@ -77,11 +77,11 @@ class PhotoIndexTest {
                 exifReads++
                 1700000000000L
             }
-            assertEquals(emptyList<IndexedPhoto>(), source.loadCached())
+            assertEquals(emptyList<PhotoRef>(), source.loadCached())
 
             val first = source.refresh(emptyList())
             assertTrue(first.changed)
-            assertEquals(2, first.entries.size)
+            assertEquals(2, first.items.size)
             assertEquals(2, exifReads)
 
             val cached = source.loadCached()

@@ -41,17 +41,28 @@ internal const val TV_HEADER_TOP_MARGIN_DP = 14
 /** Uniform TV horizontal safe-area margin (left & right), aligned with the gallery Year text. */
 internal const val TV_HORIZONTAL_MARGIN_DP = 30
 
-private const val DISABLED_COLOR = 0xFF666666.toInt()
-private const val CARD_FILL_COLOR = 0xFF1E1E1E.toInt()
-private const val CARD_FOCUSED_FILL_COLOR = 0xFF333333.toInt()
-private const val CARD_DISABLED_FILL_COLOR = 0xFF161616.toInt()
-private const val CARD_SUBTLE_BORDER_COLOR = 0xFF303030.toInt()
-private const val CARD_TEXT_COLOR = 0xFFEBEBEB.toInt()
+/** Centralized dark TV color palette shared across all screens and panels. */
+internal object TvDesignTokens {
+    val background = 0xFF101010.toInt()
+    val panelBackground = 0xE6161616.toInt()
+    val optionsPanelBackground = 0xD9222222.toInt()
+    val overlayScrim = 0xB8000000.toInt()
+    val surfaceRow = 0xFF1A1A1A.toInt()
+    val surfaceCard = 0xFF1E1E1E.toInt()
+    val surfaceFocused = 0xFF333333.toInt()
+    val surfaceDisabled = 0xFF161616.toInt()
+    val borderSubtle = 0xFF303030.toInt()
+    val divider = 0xFF2B2B2B.toInt()
+    val textPrimary = 0xFFEBEBEB.toInt()
+    val textSecondary = 0xFFBBBBBB.toInt()
+    val textMuted = 0xFF9E9E9E.toInt()
+    val textDisabled = 0xFF666666.toInt()
+}
 
 /** Semi-transparent panel that slides in from the right over a dimmed screen. */
 internal class RightOptionsOverlay(context: Context) {
     val view = FrameLayout(context).apply {
-        setBackgroundColor(0xB8000000.toInt())
+        setBackgroundColor(TvDesignTokens.overlayScrim)
         visibility = View.GONE
         setOnClickListener { hide() }
     }
@@ -61,7 +72,7 @@ internal class RightOptionsOverlay(context: Context) {
     private val panel = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(context.dp(24), context.dp(24), context.dp(24), 0)
-        setBackgroundColor(0xD9222222.toInt())
+        setBackgroundColor(TvDesignTokens.optionsPanelBackground)
         setOnClickListener { }
     }
 
@@ -144,7 +155,7 @@ internal fun Context.createOptionText(
         setTextColor(
             ColorStateList(
                 arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-                intArrayOf(DISABLED_COLOR, Color.WHITE)
+                intArrayOf(TvDesignTokens.textDisabled, Color.WHITE)
             )
         )
         setPadding(ctx.dp(16), ctx.dp(8), ctx.dp(16), ctx.dp(8))
@@ -205,9 +216,9 @@ private fun styleCardOption(
     val enabled = button.isEnabled
     button.setTextColor(
         when {
-            !enabled -> DISABLED_COLOR
+            !enabled -> TvDesignTokens.textDisabled
             hasFocus -> Color.WHITE
-            else -> CARD_TEXT_COLOR
+            else -> TvDesignTokens.textPrimary
         }
     )
     button.setTypeface(null, if (hasFocus && enabled) Typeface.BOLD else Typeface.NORMAL)
@@ -216,14 +227,14 @@ private fun styleCardOption(
         cornerRadius = context.dp(if (pill) 100 else 10).toFloat()
         setColor(
             when {
-                !enabled -> CARD_DISABLED_FILL_COLOR
-                hasFocus -> CARD_FOCUSED_FILL_COLOR
-                else -> CARD_FILL_COLOR
+                !enabled -> TvDesignTokens.surfaceDisabled
+                hasFocus -> TvDesignTokens.surfaceFocused
+                else -> TvDesignTokens.surfaceCard
             }
         )
         when {
             hasFocus && enabled -> setStroke(context.dp(2), Color.WHITE)
-            enabled -> setStroke(context.dp(1), CARD_SUBTLE_BORDER_COLOR)
+            enabled -> setStroke(context.dp(1), TvDesignTokens.borderSubtle)
             else -> setStroke(0, Color.TRANSPARENT)
         }
     }

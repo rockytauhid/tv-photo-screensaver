@@ -94,7 +94,7 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(28), dp(24), dp(28), dp(28))
             gravity = Gravity.TOP
-            setBackgroundColor(PANEL_BACKGROUND_COLOR)
+            setBackgroundColor(TvDesignTokens.panelBackground)
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -208,7 +208,7 @@ class SettingsActivity : Activity() {
     ) {
         if (showDivider) {
             parent.addView(
-                View(this).apply { setBackgroundColor(DIVIDER_COLOR) },
+                View(this).apply { setBackgroundColor(TvDesignTokens.divider) },
                 LinearLayout.LayoutParams(-1, dp(1)).apply {
                     topMargin = dp(16)
                     bottomMargin = dp(14)
@@ -221,7 +221,7 @@ class SettingsActivity : Activity() {
                 textSize = 12f
                 letterSpacing = 0.08f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(SECTION_TITLE_COLOR)
+                setTextColor(TvDesignTokens.textMuted)
                 setPadding(dp(4), 0, dp(4), dp(4))
             },
             LinearLayout.LayoutParams(-1, -2)
@@ -234,7 +234,7 @@ class SettingsActivity : Activity() {
     private fun addHelperText(parent: LinearLayout): TextView =
         TextView(this).also {
             it.textSize = 13f
-            it.setTextColor(HELPER_TEXT_COLOR)
+            it.setTextColor(TvDesignTokens.textSecondary)
             it.setPadding(dp(4), dp(2), dp(4), dp(8))
             parent.addView(it, LinearLayout.LayoutParams(-1, -2))
         }
@@ -380,11 +380,6 @@ class SettingsActivity : Activity() {
         const val ORDER_DATE_TIME = "date_time"
         const val ORDER_RANDOM = "random"
         private const val SCREENSAVER_COMPONENTS = "screensaver_components"
-
-        private const val PANEL_BACKGROUND_COLOR = 0xE6161616.toInt()
-        private const val DIVIDER_COLOR = 0xFF2B2B2B.toInt()
-        private const val SECTION_TITLE_COLOR = 0xFF9E9E9E.toInt()
-        private const val HELPER_TEXT_COLOR = 0xFFAAAAAA.toInt()
 
         private const val PICK_FOLDER = 1
         private const val REQUEST_STORAGE_PERMISSION = 2

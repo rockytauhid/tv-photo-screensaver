@@ -72,9 +72,16 @@ interface PhotoSource {
 - Watch out: some Sony boards cut power to a USB port while USB debugging is on (cleanyourtv `PROMPT.md`). Test the
   USB path with debugging off, via `logcat` over a different route or by checking the slideshow itself.
 
-### 2. Local network (NAS)
+### 2. Local network (Immich, SMB, WebDAV, Plex)
 
-- **SMB.** Most NASes (Synology, QNAP, Windows, Samba) offer it. Modern ones disable SMB1, so the library must speak
+- **Immich (first LAN source).** Self-hosted photo server over LAN HTTP/HTTPS with a user API key (`x-api-key` header,
+  stored encrypted via Android Keystore). Uses built-in `HttpURLConnection` + `org.json` — **zero new dependencies**.
+  - **Server thumbnails** (**verify** current Immich API paths before coding, e.g. `/api/assets/{id}/thumbnail?size=preview`
+    and `/api/albums` / `/api/search/metadata`): returns server-resized JPEGs/WebPs, which keeps bandwidth and TV heap
+    low and sidesteps Android 8's lack of HEIC decoding.
+  - Plugs into `PhotoSource` (`ImmichPhotoSource`) with offline-first index caching + bounded disk image cache (100–200 MB),
+    so the screensaver keeps playing cached photos even when the server is offline.
+- **SMB (second LAN source).** Most NASes and Windows PCs offer it. Modern ones disable SMB1, so the library must speak
   SMB2/3. Candidates (**verify** licence, size, Android 8 behaviour):
   - `smbj` (Apache 2.0): SMB2/3 only, pure Java, uses BouncyCastle or JCE for crypto; check it loads on API 26.
   - `jcifs-ng` (LGPL 2.1): SMB1/2/3, a bigger API; the LGPL has implications for a closed app and for R8 shrinking.
@@ -158,21 +165,21 @@ Rules for cloud code:
 | 0 | Skeleton | `PhotoDream` builds, is listed under Screen saver and starts on the TV. **The code scaffold builds; not yet installed.** |
 | 1 | Local slideshow | Reads supported photos recursively from a selected internal/USB folder; images are sampled to at most 1920x1080 and transitions support cut, fade and slide. Implemented; TV playback and long-run memory are not yet verified. |
 | 2 | Settings and gallery | D-pad folder browser, 3/8/15-second speed presets, shuffle and transition-style selection, metadata toggle, virtualized thumbnail gallery and full-screen detail preview. Implemented; TV navigation and 10,000-photo responsiveness are not yet verified on hardware. |
-| 3 | WebDAV, then SMB | A NAS share plays; offline NAS falls back cleanly. |
-| 4 | Cloud (one service) | OneDrive device-flow sign-in, thumbnails, token stored encrypted. Then Dropbox. |
-| 5 | Polish | Ken Burns if the GPU copes, caching limits, translations. |
+| 3 | Local network (Immich, then SMB) | An Immich server or SMB share plays via `PhotoSource`; offline server falls back cleanly to cached photos. |
+| 4 | Online clouds | OneDrive device-flow sign-in, thumbnails, token stored encrypted. Then Google Drive / Dropbox / others as allowed. |
+| 5 | Polish | Ken Burns if the GPU copes, disk thumbnail cache, clock toggle, translations. |
 
 ## Decisions (from the owner)
 
-- **Language: Kotlin** (1.9.24, JVM target 17). The skeleton is converted and builds (19 KB release APK).
-  Keep the standard library only; avoid coroutines and other libraries until a need is written down here.
-- **No NAS.** The owner has a Windows desktop PC that runs Plex Media Server. So the local-network source order is:
-  1. **Plex photo library** over HTTP with a Plex token (the TV already has the Plex app, and the server already
-     indexes and resizes photos; its photo transcoder endpoint can return 1920x1080 JPEGs). **verify** endpoints.
-  2. **SMB/WebDAV** by sharing a photo folder from the Windows PC (SMB2/3 is on by default in Windows). Later.
-- **First cloud: OneDrive.** Others (Dropbox, ...) are added one at a time afterwards.
-- Revised milestone order: 0 skeleton, 1 local slideshow, 2 settings screen, 3 OneDrive, 4 Plex, 5 SMB/WebDAV and
-  other clouds, 6 polish. OneDrive moves ahead of the LAN sources.
+- **Language: Kotlin** (1.9.24, JVM target 17). Keep the standard library only; avoid coroutines and other libraries
+  until a need is written down here.
+- **Local network before online cloud.** Priority order:
+  1. **Immich** over LAN HTTP/HTTPS with API key (zero new dependencies, server-sized thumbnails avoid HEIC issues).
+  2. **SMB** share on LAN (Windows PC / NAS; evaluate `smbj` APK size & heap before adding).
+  3. **Plex / WebDAV** (optional LAN sources).
+  4. **Online clouds** (OneDrive, Google Drive, iCloud, Dropbox — later, one at a time).
+- Revised milestone order: 0 skeleton, 1 local slideshow, 2 settings & gallery, 3 Local network (Immich & SMB),
+  4 Online clouds, 5 polish.
 
 ## Local implementation notes
 
