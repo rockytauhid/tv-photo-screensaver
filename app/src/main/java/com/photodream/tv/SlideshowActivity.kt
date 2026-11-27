@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -23,8 +22,6 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Future
@@ -33,7 +30,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * Full-screen slideshow with no on-screen buttons: the photo is the hero. Remote keys:
+ * Full-screen slideshow that mirrors [PhotoDream] visually, with no on-screen buttons. Remote keys:
  * Left/Right previous/next photo, Play/Pause (or OK) pause and resume, Back returns to the gallery.
  */
 class SlideshowActivity : Activity() {
@@ -49,14 +46,9 @@ class SlideshowActivity : Activity() {
     private var displayedPhotoIndex = -1
     private var initialPhotoPath: String? = null
     private var displayGeneration = 0
-    private lateinit var imageViews: Array<ImageView>
-    private lateinit var dateLabel: TextView
-    private lateinit var locationLabel: TextView
-    private lateinit var status: TextView
-    private lateinit var clock: PhotoClock
+    private lateinit var stage: SlideshowStage
     private lateinit var pauseIndicator: ImageView
     private lateinit var locationLoader: PhotoLocationLoader
-    private var visibleImage = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,40 +60,8 @@ class SlideshowActivity : Activity() {
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
 
-        imageViews = Array(2) {
-            ImageView(this).apply {
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                visibility = View.INVISIBLE
-                setBackgroundColor(Color.BLACK)
-            }
-        }
-        dateLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        locationLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            gravity = Gravity.RIGHT
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        val footer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), 0, dp(20), 0)
-            addView(dateLabel, LinearLayout.LayoutParams(0, -1, 1f))
-            addView(locationLabel, LinearLayout.LayoutParams(0, -1, 1f))
-        }
-        clock = PhotoClock(this, mainHandler, Gravity.START)
+        stage = SlideshowStage(this, mainHandler)
         locationLoader = PhotoLocationLoader(this, mainHandler)
-        status = TextView(this).apply {
-            setTextColor(0xFFBBBBBB.toInt())
-            textSize = 22f
-            gravity = Gravity.CENTER
-        }
         pauseIndicator = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(36), dp(36), dp(36), dp(36))
@@ -114,34 +74,21 @@ class SlideshowActivity : Activity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             visibility = View.GONE
         }
-        val content = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            addView(imageViews[0], FrameLayout.LayoutParams(-1, -1))
-            addView(imageViews[1], FrameLayout.LayoutParams(-1, -1))
-            addView(status, FrameLayout.LayoutParams(-1, -1))
-            addView(footer, FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM))
-            addView(
-                clock.view,
-                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.LEFT).apply {
-                    setMargins(dp(20), dp(12), 0, 0)
-                }
-            )
-            addView(
-                pauseIndicator,
-                FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER)
-            )
-        }
-        setContentView(content)
+        stage.root.addView(
+            pauseIndicator,
+            FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER)
+        )
+        setContentView(stage.root)
     }
 
     override fun onResume() {
         super.onResume()
-        clock.start()
+        stage.clock.start()
         startSlideshow()
     }
 
     override fun onPause() {
-        clock.stop()
+        stage.clock.stop()
         initialPhotoPath =
             photos.getOrNull(displayedPhotoIndex)?.absolutePath ?: initialPhotoPath
         stopSlideshow(preserveCurrentPhoto = true)
@@ -209,14 +156,14 @@ class SlideshowActivity : Activity() {
         )
 
         if (!hasPhotoPermission()) {
-            status.setText(R.string.permission_required)
+            stage.status.setText(R.string.permission_required)
             return
         }
         val folder = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
             .getString(SettingsActivity.PHOTO_FOLDER, null)
             ?.let(::File)
         if (folder == null) {
-            status.setText(R.string.choose_photo_folder)
+            stage.status.setText(R.string.choose_photo_folder)
             return
         }
 
@@ -244,7 +191,7 @@ class SlideshowActivity : Activity() {
                 if (!isRunning) return@post
                 photos = ordered
                 if (photos.isEmpty()) {
-                    status.setText(
+                    stage.status.setText(
                         if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
                     )
                 } else {
@@ -254,7 +201,7 @@ class SlideshowActivity : Activity() {
                     initialPhotoPath = null
                     nextPhoto = startingIndex.takeIf { it >= 0 } ?: 0
                     if (isPaused) {
-                        if (imageViews[visibleImage].drawable != null && startingIndex >= 0) {
+                        if (stage.imageViews[stage.visibleImage].drawable != null && startingIndex >= 0) {
                             currentPhotoIndex = startingIndex
                             displayedPhotoIndex = startingIndex
                             nextPhoto = (startingIndex + 1) % photos.size
@@ -305,8 +252,8 @@ class SlideshowActivity : Activity() {
                     return@post
                 }
                 if (frame == null) {
-                    status.setText(R.string.photo_unavailable)
-                    status.visibility = View.VISIBLE
+                    stage.status.setText(R.string.photo_unavailable)
+                    stage.status.visibility = View.VISIBLE
                     scheduleNext()
                     return@post
                 }
@@ -317,56 +264,21 @@ class SlideshowActivity : Activity() {
     }
 
     private fun present(frame: PhotoFrame) {
-        val newIndex = if (imageViews[visibleImage].drawable == null) visibleImage else 1 - visibleImage
-        val oldIndex = 1 - newIndex
-        val incoming = imageViews[newIndex]
-        val outgoing = imageViews[oldIndex]
-        incoming.animate().cancel()
-        outgoing.animate().cancel()
-        val replacedBitmap = (incoming.drawable as? BitmapDrawable)?.bitmap
-        incoming.setImageBitmap(frame.bitmap)
-        incoming.contentDescription = frame.photoName
-        if (replacedBitmap != null && replacedBitmap !== frame.bitmap) replacedBitmap.recycle()
-        incoming.visibility = View.VISIBLE
-        incoming.alpha = 1f
-        incoming.translationX = 0f
-        status.visibility = View.GONE
-
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val transition = preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)
+        val distance = window.decorView.width.toFloat().takeIf { it > 0f } ?: 1920f
+        stage.present(frame.bitmap, frame.photoName, transition, distance)
+
         val showDate = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
         val showLocation = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
-        dateLabel.text = if (showDate) frame.date else ""
-        locationLabel.text = ""
+        stage.dateLabel.text = if (showDate) frame.date else ""
+        stage.locationLabel.text = ""
         if (showLocation) {
-            locationLoader.load(frame.file) { locationLabel.text = it.orEmpty() }
+            locationLoader.load(frame.file) { stage.locationLabel.text = it.orEmpty() }
         } else {
             locationLoader.cancel()
         }
         displayedPhotoIndex = currentPhotoIndex
-
-        when (preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)) {
-            SettingsActivity.FADE -> {
-                if (outgoing.drawable == null) outgoing.visibility = View.INVISIBLE
-                incoming.alpha = 0f
-                incoming.animate().alpha(1f).setDuration(900).start()
-                outgoing.animate().alpha(0f).setDuration(900)
-                    .withEndAction { outgoing.visibility = View.INVISIBLE }
-                    .start()
-            }
-            SettingsActivity.SLIDE -> {
-                val distance = window.decorView.width.toFloat()
-                incoming.translationX = distance
-                incoming.animate().translationX(0f).setDuration(700).start()
-                outgoing.animate().translationX(-distance).setDuration(700)
-                    .withEndAction {
-                        outgoing.visibility = View.INVISIBLE
-                        outgoing.translationX = 0f
-                    }
-                    .start()
-            }
-            else -> outgoing.visibility = View.INVISIBLE
-        }
-        visibleImage = newIndex
     }
 
     private fun scheduleNext() {
@@ -408,22 +320,7 @@ class SlideshowActivity : Activity() {
         nextPhoto = 0
         currentPhotoIndex = -1
         displayedPhotoIndex = -1
-        imageViews.forEachIndexed { index, image ->
-            image.animate().cancel()
-            if (preserveCurrentPhoto && index == visibleImage && image.drawable != null) {
-                image.alpha = 1f
-                image.translationX = 0f
-                image.visibility = View.VISIBLE
-            } else {
-                val bitmap = (image.drawable as? BitmapDrawable)?.bitmap
-                image.setImageDrawable(null)
-                bitmap?.recycle()
-                image.visibility = View.INVISIBLE
-                image.alpha = 1f
-                image.translationX = 0f
-            }
-        }
-        if (!preserveCurrentPhoto) visibleImage = 0
+        stage.clearImages(preserveVisible = preserveCurrentPhoto)
     }
 
     private fun decode(file: File): PhotoFrame? {

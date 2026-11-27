@@ -4,6 +4,8 @@
 package com.photodream.tv
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -20,5 +22,18 @@ class PhotoFavoritesTest {
         assertEquals(setOf(first), favorites)
         assertEquals(emptySet<String>(), removed)
         assertEquals(listOf(photos.first()), PhotoFavorites.filter(photos, favorites))
+    }
+
+    @Test
+    fun checksWhetherFavoritesBelongToSelectedFolder() {
+        val folder = File("photos").absolutePath
+        val siblingFolder = File("photos-extra").absolutePath
+        val inside = File(File(folder, "2025"), "a.jpg").absolutePath
+        val sibling = File(siblingFolder, "b.jpg").absolutePath
+
+        assertTrue(PhotoFavorites.hasAnyInFolder(setOf(inside), folder))
+        assertFalse(PhotoFavorites.hasAnyInFolder(setOf(sibling), folder))
+        assertFalse(PhotoFavorites.hasAnyInFolder(setOf(inside), null))
+        assertFalse(PhotoFavorites.hasAnyInFolder(emptySet(), folder))
     }
 }

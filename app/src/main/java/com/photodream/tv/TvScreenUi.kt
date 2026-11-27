@@ -8,12 +8,16 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
 import android.provider.Settings
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
@@ -28,7 +32,21 @@ import android.widget.Toast
 /** Gold is reserved for state: a favorite, an enabled option, the current year or month. */
 internal const val GOLD_COLOR = 0xFFFFC107.toInt()
 
+/** Uniform TV vertical safe-area margin (bottom) used across gallery and preview. */
+internal const val TV_EDGE_MARGIN_DP = 20
+
+/** Top margin for the 44dp header row so the visual text/icon top aligns with the 30dp left edge. */
+internal const val TV_HEADER_TOP_MARGIN_DP = 14
+
+/** Uniform TV horizontal safe-area margin (left & right), aligned with the gallery Year text. */
+internal const val TV_HORIZONTAL_MARGIN_DP = 30
+
 private const val DISABLED_COLOR = 0xFF666666.toInt()
+private const val CARD_FILL_COLOR = 0xFF1E1E1E.toInt()
+private const val CARD_FOCUSED_FILL_COLOR = 0xFF333333.toInt()
+private const val CARD_DISABLED_FILL_COLOR = 0xFF161616.toInt()
+private const val CARD_SUBTLE_BORDER_COLOR = 0xFF303030.toInt()
+private const val CARD_TEXT_COLOR = 0xFFEBEBEB.toInt()
 
 /** Semi-transparent panel that slides in from the right over a dimmed screen. */
 internal class RightOptionsOverlay(context: Context) {
@@ -143,6 +161,74 @@ internal fun Context.createOptionText(
     }
 }
 
+/**
+ * Rounded dark card option button with unmistakable D-pad focus (elevated fill + 2dp white border),
+ * visually distinct from plain helper/section text.
+ */
+internal fun Context.createCardOption(
+    label: CharSequence = "",
+    textSizeSp: Float = 16f,
+    minHeightDp: Int = 48,
+    pill: Boolean = false,
+    onClick: () -> Unit
+): TextView {
+    val ctx = this
+    return TextView(ctx).apply {
+        text = label
+        textSize = textSizeSp
+        gravity = if (pill) Gravity.CENTER else Gravity.CENTER_VERTICAL
+        setPadding(ctx.dp(18), ctx.dp(10), ctx.dp(18), ctx.dp(10))
+        minHeight = ctx.dp(minHeightDp)
+        isFocusable = true
+        isFocusableInTouchMode = true
+        isClickable = true
+        styleCardOption(ctx, this, hasFocus = false, pill = pill)
+        setOnClickListener { if (isEnabled) onClick() }
+        setOnFocusChangeListener { v, hasFocus ->
+            styleCardOption(ctx, v as TextView, hasFocus, pill)
+        }
+    }
+}
+
+internal fun Context.refreshCardOptionStyle(button: TextView, pill: Boolean = false) {
+    button.isFocusable = button.isEnabled
+    button.isFocusableInTouchMode = button.isEnabled
+    styleCardOption(this, button, button.hasFocus(), pill)
+}
+
+private fun styleCardOption(
+    context: Context,
+    button: TextView,
+    hasFocus: Boolean,
+    pill: Boolean
+) {
+    val enabled = button.isEnabled
+    button.setTextColor(
+        when {
+            !enabled -> DISABLED_COLOR
+            hasFocus -> Color.WHITE
+            else -> CARD_TEXT_COLOR
+        }
+    )
+    button.setTypeface(null, if (hasFocus && enabled) Typeface.BOLD else Typeface.NORMAL)
+    button.background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = context.dp(if (pill) 100 else 10).toFloat()
+        setColor(
+            when {
+                !enabled -> CARD_DISABLED_FILL_COLOR
+                hasFocus -> CARD_FOCUSED_FILL_COLOR
+                else -> CARD_FILL_COLOR
+            }
+        )
+        when {
+            hasFocus && enabled -> setStroke(context.dp(2), Color.WHITE)
+            enabled -> setStroke(context.dp(1), CARD_SUBTLE_BORDER_COLOR)
+            else -> setStroke(0, Color.TRANSPARENT)
+        }
+    }
+}
+
 /** Shows "Label: On" or "Label: Off" with the On in gold. */
 internal fun TextView.setToggleText(label: String, enabled: Boolean) {
     val value = context.getString(if (enabled) R.string.on else R.string.off)
@@ -172,10 +258,10 @@ internal fun Context.createIconButton(
         setImageResource(iconResource)
         contentDescription = description
         scaleType = ImageView.ScaleType.CENTER_INSIDE
-        setPadding(ctx.dp(12), ctx.dp(12), ctx.dp(12), ctx.dp(12))
+        setPadding(ctx.dp(10), ctx.dp(10), ctx.dp(10), ctx.dp(10))
         background = null
-        minimumWidth = ctx.dp(48)
-        minimumHeight = ctx.dp(48)
+        minimumWidth = ctx.dp(44)
+        minimumHeight = ctx.dp(44)
         isFocusable = true
         isFocusableInTouchMode = true
         imageTintList = ColorStateList.valueOf(Color.WHITE)
@@ -205,6 +291,129 @@ internal fun Activity.openScreensaverSettings() {
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(this, R.string.screensaver_settings_unavailable, Toast.LENGTH_LONG).show()
     }
+}
+
+/**
+ * Shared visual stage for both the system screensaver ([PhotoDream]) and manual slideshow
+ * ([SlideshowActivity]) so both modes stay visually identical.
+ */
+internal class SlideshowStage(context: Context, handler: Handler) {
+    val imageViews: Array<ImageView> = Array(2) {
+        ImageView(context).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            visibility = View.INVISIBLE
+            setBackgroundColor(Color.BLACK)
+        }
+    }
+    val dateLabel: TextView = footerLabel(context, Gravity.START)
+    val locationLabel: TextView = footerLabel(context, Gravity.END)
+    val status: TextView = TextView(context).apply {
+        setTextColor(0xFFBBBBBB.toInt())
+        textSize = 22f
+        gravity = Gravity.CENTER
+    }
+    val clock: PhotoClock = PhotoClock(context, handler, Gravity.END)
+    val root: FrameLayout = FrameLayout(context).apply {
+        setBackgroundColor(Color.BLACK)
+        addView(imageViews[0], FrameLayout.LayoutParams(-1, -1))
+        addView(imageViews[1], FrameLayout.LayoutParams(-1, -1))
+        addView(status, FrameLayout.LayoutParams(-1, -1))
+        val footer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(dateLabel, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(locationLabel, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        addView(
+            footer,
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                setMargins(context.dp(40), 0, context.dp(40), context.dp(32))
+            }
+        )
+        addView(
+            clock.view,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.RIGHT).apply {
+                setMargins(0, context.dp(24), context.dp(32), 0)
+            }
+        )
+    }
+
+    var visibleImage = 0
+        private set
+
+    fun present(
+        bitmap: Bitmap,
+        contentDescription: String?,
+        transition: String?,
+        slideDistance: Float
+    ) {
+        val newIndex = if (imageViews[visibleImage].drawable == null) visibleImage else 1 - visibleImage
+        val oldIndex = 1 - newIndex
+        val incoming = imageViews[newIndex]
+        val outgoing = imageViews[oldIndex]
+        incoming.animate().cancel()
+        outgoing.animate().cancel()
+        val replacedBitmap = (incoming.drawable as? BitmapDrawable)?.bitmap
+        incoming.setImageBitmap(bitmap)
+        incoming.contentDescription = contentDescription
+        if (replacedBitmap != null && replacedBitmap !== bitmap) replacedBitmap.recycle()
+        incoming.visibility = View.VISIBLE
+        incoming.alpha = 1f
+        incoming.translationX = 0f
+        status.visibility = View.GONE
+
+        when (transition) {
+            SettingsActivity.FADE -> {
+                if (outgoing.drawable == null) outgoing.visibility = View.INVISIBLE
+                incoming.alpha = 0f
+                incoming.animate().alpha(1f).setDuration(900).start()
+                outgoing.animate().alpha(0f).setDuration(900)
+                    .withEndAction { outgoing.visibility = View.INVISIBLE }
+                    .start()
+            }
+            SettingsActivity.SLIDE -> {
+                incoming.translationX = slideDistance
+                incoming.animate().translationX(0f).setDuration(700).start()
+                outgoing.animate().translationX(-slideDistance).setDuration(700)
+                    .withEndAction {
+                        outgoing.visibility = View.INVISIBLE
+                        outgoing.translationX = 0f
+                    }
+                    .start()
+            }
+            else -> outgoing.visibility = View.INVISIBLE
+        }
+        visibleImage = newIndex
+    }
+
+    fun clearImages(preserveVisible: Boolean = false) {
+        imageViews.forEachIndexed { index, image ->
+            image.animate().cancel()
+            if (preserveVisible && index == visibleImage && image.drawable != null) {
+                image.alpha = 1f
+                image.translationX = 0f
+                image.visibility = View.VISIBLE
+            } else {
+                val bitmap = (image.drawable as? BitmapDrawable)?.bitmap
+                image.setImageDrawable(null)
+                bitmap?.recycle()
+                image.visibility = View.INVISIBLE
+                image.alpha = 1f
+                image.translationX = 0f
+            }
+        }
+        if (!preserveVisible) visibleImage = 0
+    }
+
+    private fun footerLabel(context: Context, gravity: Int): TextView =
+        TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            this.gravity = gravity
+        }
 }
 
 internal fun Context.dp(value: Int): Int =

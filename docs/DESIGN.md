@@ -130,7 +130,7 @@ Rules for cloud code:
 
 ## Settings and distribution
 
-- Settings screen: add/remove sources, folder browser, speed presets (Slow 3 s, Medium 8 s, Fast 15 s),
+- Settings screen: add/remove sources, folder browser, speed presets (Slow 15 s, Medium 8 s, Fast 3 s),
   shuffle on/off, transition style (cut, fade, slide), clock overlay (off, small), test button ("show now").
 - A `DreamService` can point to a settings activity through `android:settingsActivity` and a
   `<meta-data android:name="android.service.dream">` XML resource. Whether the Sony's Settings app shows a gear is
@@ -176,22 +176,30 @@ Rules for cloud code:
 
 ## Local implementation notes
 
-- The settings app requests photo-read permission and includes a D-pad folder browser rooted at `/storage`, so
-  mounted USB volumes can be selected without relying on DocumentsUI. Direct file browsing is intended for the
-  Android 8 target; scoped-storage behaviour on newer Android versions is not verified.
-- The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes to a maximum
-  of 1920x1080, reads EXIF date, GPS coordinates, camera make/model, exposure, aperture, ISO and focal length when
-  present, and gracefully skips unreadable files.
-- Speed presets map Slow, Medium and Fast to 3, 8 and 15 seconds. Shuffle toggles random ordering; when off,
-  photos are shown newest first. Styles are cut, crossfade and horizontal slide. Metadata visibility can be toggled
-  as a group.
-- The app opens to a D-pad photo gallery with an item count and Favorites/All, play-slideshow and Settings icons in
-  its header. Favorites/All is a persisted filter shared with the manual slideshow.
-  Settings slides in from the right as a solid half-width panel while the gallery remains visible and dimmed behind it.
-  The grid shows three rows of square, virtualized thumbnails and scrolls horizontally. Thumbnails decode off the UI
-  thread at up to twice their rendered pixel size, with bounded decode work and a small LRU cache. The focused
-  thumbnail's capture date and GPS location, when available, appear at the bottom left and right of the gallery
-  screen; filenames and metadata overlays are not shown on thumbnails.
+- The settings app requests photo-read permission and includes a D-pad folder browser rooted at `/storage`, with
+  `Internal Storage`, `Internal Pictures`, and mounted USB volumes (skipping unreadable `/storage/emulated` and
+  `/storage/self` entries), high-contrast focus borders, direct subfolder/photo counts, a gold `Current` badge on the
+  active folder, and focus restoration when navigating up. Direct file browsing is intended for the Android 8 target;
+  scoped-storage behaviour on newer Android versions is not verified.
+- The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes within the
+  display and heap budget, applies EXIF orientation (including mirrored orientations), reads EXIF capture date and GPS
+  coordinates when present, and gracefully skips unreadable or out-of-memory files.
+- Speed presets map Slow, Medium and Fast to 15, 8 and 3 seconds. Shuffle toggles random ordering; when off,
+  photos are shown newest first (and the screensaver resumes after the last shown photo). Styles are cut, crossfade
+  and horizontal slide. Photo date and photo location visibility can be toggled independently.
+- The app opens to a D-pad photo gallery with a uniform 20dp safe-area margin aligning the header title, top-right
+  action icons (Favorites/All, play-slideshow, Settings), and bottom-left date label (and mirrored by Preview's
+  top-left photo counter `1 of N`, top-right icons, and bottom date/location footer). When photo access has not been
+  granted or no photo folder is selected yet, the gallery automatically opens the Settings panel once per launch so
+  first-time setup starts immediately. While scanning, a centered loading spinner replaces the empty grid.
+  Favorites/All is a persisted filter shared with the slideshow and screensaver. Settings slides in from the right as a
+  semi-transparent half-width panel with uppercase section headers, muted helper text, and rounded dark option cards
+  that highlight with a white border on focus. The three-row thumbnail grid is centered between the shortcuts and
+  footer, sized to show 7 full columns plus ~3/4 of the 8th column on 1080p, starts aligned with the 20dp left margin,
+  scrolls across the full screen width with no right padding, and enlarges (1.14x) the focused thumbnail. Thumbnails
+  decode off the UI thread at up to twice their rendered pixel size, with bounded decode work and a small LRU cache.
+  Only the focused thumbnail's capture date is shown at the bottom left of the gallery screen to keep scrolling snappy;
+  filenames and metadata overlays are not shown on thumbnails.
 - The horizontal grid uses `androidx.leanback:leanback:1.0.0` (Apache-2.0) and its RecyclerView support rather than
   constructing a view for every photo. The Leanback AAR is 1.36 MB; the debug APK grew by 1.91 MB (from 936,925 to
   2,843,704 bytes). Its photo-view memory remains bounded to the visible/recycled cells; the existing thumbnail LRU
@@ -199,38 +207,41 @@ Rules for cloud code:
 - Shuffle toggles random ordering per run; with Shuffle off, photos are always newest-first by capture date/time.
   Photos without EXIF capture time use filesystem modification time.
 - Favorites are stored by photo path. The gallery starts in Favorites when the selected folder contains any unless
-  the user has persisted All; its header filter is disabled when the folder contains none. Available years and months
-  are based on the active set.
-- The Settings activity controls the system DreamService's speed preset, transition style, shuffle and all-photos or
-  favorites-only source through shared preferences. Android system settings still select Photo Dream and control
-  when the dream starts. The DreamService is non-interactive, so its Options key is not available while it runs.
-- Selecting a gallery thumbnail opens a sampled full-screen preview with a right-side details panel. The remote
-  Options/Menu key opens a shared right-quarter panel that slides in from the right; preview actions show/hide details
-  or add/remove the current photo from Favorites.
-- Gallery, Preview, and manual slideshow have screen-specific Options/Menu panels with the same right-quarter
-  slide-in layout, translucent dark panel, and dimmed background. Their actions are smaller, title-case text; focused actions and
-  icons are yellow. Gallery offers screensaver selection, Preview shows the details On/Off control and favorite
-  action, and Slideshow controls details, the all/favorite photo set, speed, shuffle and style. The slideshow's
-  date/location footer matches the gallery and its clock is at the upper left. Settings icons align at the top-right
-  in all app screens. Active year/month shortcuts are larger, bold, and white. The manual slideshow's Favorites/All,
-  play/pause, and Settings controls animate upward and fade away after three seconds; any remote key shows them again.
+  the user has persisted All; its header filter and the Settings "Show: Favorite" option are disabled when the
+  selected folder contains none. Available years and months are based on the active set.
+- The Settings activity controls the system DreamService's speed preset, transition style, shuffle, date/location
+  visibility, and all-photos or favorites-only source through shared preferences. Android system settings still select
+  Photo Dream and control when the dream starts. The DreamService is non-interactive, so its Options key is not
+  available while it runs.
+- Selecting a gallery thumbnail opens a full-screen preview with favorite, play, and settings icons at the top right
+  (press Up to reach them, Down to return to the photo) and the date and location along the bottom. Opening Settings
+  from Preview shows only Show Photo Date and Show Photo Location. Edge `<` / `>` direction indicators appear briefly
+  when opening Preview, moving between photos, or pressing Down from the top-right icons (only `>` on the first photo,
+  only `<` on the last), then slide off to the left/right. The remote Options/Menu key opens a right-quarter
+  semi-transparent panel in the gallery and preview with Show Photo Date and Show Photo Location (plus Set As
+  Screensaver in the gallery). Gold is reserved for state (active favorite, enabled toggle, current year/month);
+  focused actions and icons are circled in white.
+- The manual slideshow and system `DreamService` share `SlideshowStage` so they are visually identical: no on-screen
+  buttons, top-right clock, matching `18sp` shadowed date/location footer, and shared fade/slide/cut transitions.
+  In manual slideshow mode, Left/Right move between photos, Play/Pause or OK pauses and resumes (showing a centered
+  pause/play icon), and Back returns to the gallery with the last photo highlighted.
+- Location names are formatted as `Suburb, CC` using Android's `Geocoder` and cached in memory and app preferences so
+  previously resolved names still display offline. The app opens no network socket itself; if the TV has no Geocoder
+  backend, the location is hidden.
 - Starting the manual slideshow from the gallery's play icon or remote Play key begins with the highlighted photo
   when it belongs to the configured slideshow photo set.
 - The Preview screen's play icon starts the manual slideshow from that photo. Returning from Preview or its
   slideshow forwards the selected or last-displayed path to Gallery.
-- The remote Pause key and the on-screen playback icon pause/resume the manual slideshow. Back returns to the gallery
-  and highlights the last photo displayed.
 - When a selected photo's previous or next thumbnail is outside the visible grid, a narrow cropped preview at that
   screen edge cues the adjacent image. These two previews use the same bounded background thumbnail loader/cache.
 - Thumbnails show a loading label while decoding and a "No preview" placeholder for unreadable images. The
-  full-screen preview shows the failed filename and metadata, and left/right navigation remains available.
-- The app-owned slideshow clock is in the upper-left corner; the system DreamService clock remains upper-right.
+  full-screen preview shows the failed filename, and left/right navigation remains available.
+- Both the manual slideshow and system `DreamService` place the clock in the upper-right corner.
 - Pixel Motion Photos and other photos with embedded motion clips currently display only their still image;
   embedded video playback is not implemented.
-- Settings can launch an immediate app-owned full-screen slideshow using the configured interval, transition and
-  metadata visibility; left/right navigate photos and Back exits. Android does not expose a public API for an
-  ordinary app to start or select its `DreamService`; the "Set as screensaver" button therefore opens the system's
-  screensaver settings while Photo Dream is not selected, and is disabled once selected.
+- Android does not expose a public API for an ordinary app to start or select its `DreamService`; the "Set as
+  screensaver" option therefore opens the system's screensaver settings while Photo Dream is not selected, and is
+  disabled once selected.
 
 ## Display resolution behavior
 
@@ -246,8 +257,8 @@ Rules for cloud code:
 
 ## Open questions for the owner
 
-1. Public repository or private? Affects licence, secrets handling and whether Google Play is a goal.
-2. Is HEIC from phones common in the collection? If so, plan server-side conversion or a decoder library.
-3. OneDrive needs an app registration (a free Microsoft Entra app, public client, device-code flow enabled). The owner
+1. Is HEIC from phones common in the collection? If so, plan server-side conversion or a decoder library (OneDrive's
+   server-side JPEG thumbnails sidestep this when used).
+2. OneDrive needs an app registration (a free Microsoft Entra app, public client, device-code flow enabled). The owner
    creates it with their own Microsoft account; its client id is not a secret but is kept in `secrets.properties`.
-4. Which OneDrive folder holds the photos (for example `Pictures`)? Personal or work/school account?
+3. Which OneDrive folder holds the photos (for example `Pictures`)? Personal or work/school account?

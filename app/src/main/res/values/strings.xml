@@ -2,7 +2,8 @@
 <resources>
     <string name="app_name">Photo Dream</string>
     <string name="dream_name">Photo Dream</string>
-    <string name="settings_title">Photo Dream settings</string>
+    <string name="settings_title">Settings</string>
+    <string name="preview_settings_title">Photo settings</string>
     <string name="permission_required">Open Photo Dream settings to allow photo access.</string>
     <string name="choose_photo_folder">Choose a photo folder in Photo Dream settings.</string>
     <string name="no_photos_found">No supported photos found in this folder.</string>
@@ -11,7 +12,7 @@
     <string name="choose_folder">Choose photo folder</string>
     <string name="start_slideshow">Start Slideshow</string>
     <string name="settings_button">Settings</string>
-    <string name="settings_close">Close settings</string>
+    <string name="settings_close">Close</string>
     <string name="set_screensaver_hint">Android requires you to confirm the screensaver choice in system settings.</string>
     <string name="set_as_screensaver">Set As Screensaver</string>
     <string name="screensaver_already_selected">Already set as screensaver</string>
@@ -24,23 +25,30 @@
     <string name="gallery_thumbnail_loading">Loading…</string>
     <string name="gallery_thumbnail_unavailable">No preview</string>
     <string name="preview_photo_unavailable">Could not display:\n%1$s</string>
+    <string name="preview_photo_count">%1$d of %2$d</string>
     <string name="gallery_no_folder">Choose a photo folder in settings first.</string>
     <string name="gallery_no_photos">No supported photos found in this folder.</string>
     <string name="current_folder">Photo folder: %1$s</string>
     <string name="no_folder_selected">not selected</string>
     <string name="grant_storage_permission">Allow photo access</string>
     <string name="storage_permission_granted">Photo access allowed</string>
+    <string name="settings_section_photos">Photos</string>
+    <string name="settings_section_screensaver">Screensaver</string>
+    <string name="slideshow_screensaver_section">Slideshow &amp; screensaver</string>
+    <string name="slideshow_screensaver_subtitle">Shared by manual slideshow and system screensaver.</string>
+    <string name="settings_section_display">Display</string>
     <string name="speed_setting">Speed: %1$s</string>
     <string name="speed_slow">Slow</string>
     <string name="speed_medium">Medium</string>
     <string name="speed_fast">Fast</string>
     <string name="style_setting">Style: %1$s</string>
-    <string name="slideshow_photo_set">Show: %1$s</string>
+    <string name="slideshow_photo_set">Photos to show: %1$s</string>
+    <string name="slideshow_photo_set_no_favorites">Photos to show: All (no favorites yet)</string>
     <string name="option_show_photo_date">Show Photo Date</string>
     <string name="option_show_photo_location">Show Photo Location</string>
     <string name="option_shuffle">Shuffle</string>
-    <string name="show_all">All</string>
-    <string name="show_favorite">Favorite</string>
+    <string name="show_all">All photos</string>
+    <string name="show_favorite">Favorites only</string>
     <string name="gallery_filter_show_favorites">Show Favorite Photos</string>
     <string name="gallery_filter_show_all">View All Photos</string>
     <string name="options_title">Options</string>
@@ -57,10 +65,22 @@
     <string name="go_up">Up</string>
     <string name="use_this_folder">Use this folder</string>
     <string name="choose_storage_volume">Choose internal storage or a connected USB drive:</string>
-    <string name="no_subfolders">No folders found here.</string>
+    <string name="no_subfolders">No subfolders in this folder.</string>
+    <string name="internal_storage">Internal Storage</string>
     <string name="internal_pictures">Internal Pictures</string>
+    <string name="folder_current_badge">Current</string>
+    <string name="folder_summary">%1$s · %2$s</string>
+    <string name="folder_picker_hint">OK opens a folder · Back goes up</string>
     <plurals name="gallery_item_count">
         <item quantity="one">%d item</item>
         <item quantity="other">%d items</item>
+    </plurals>
+    <plurals name="folder_subfolder_count">
+        <item quantity="one">%d folder</item>
+        <item quantity="other">%d folders</item>
+    </plurals>
+    <plurals name="folder_photo_count">
+        <item quantity="one">%d photo here</item>
+        <item quantity="other">%d photos here</item>
     </plurals>
 </resources>

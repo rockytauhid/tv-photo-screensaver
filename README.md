@@ -21,16 +21,20 @@ favorite photo, an enabled option, and the year and month of the highlighted pho
   Highlighted icons get a circle. The three-row square thumbnail grid is one continuous timeline, newest first,
   scrolls horizontally, decodes at twice the rendered size and keeps a bounded thumbnail cache. Only the photo date
   is shown (bottom left); the location is left out to keep the grid snappy. The year and month shortcuts follow the
-  highlighted photo (both turn gold, and a focused shortcut is underlined). Selecting a year jumps to its newest
+  highlighted photo (both turn gold, and a focused shortcut gets a white pill border). Selecting a year jumps to its newest
   photo; selecting the highlighted year again collapses or expands its months, and only one year shows its months at
   a time. Selecting a month jumps to its newest photo (the last day of that month).
 - **Preview:** full-screen photo with a favorite star (gold when the photo is a favorite), play and settings icons at
   the top right (press Up to reach them, Down to return to the photo) and the date and location along the bottom.
-  Left/Right move through the photos.
-- **Slideshow:** no buttons, so the photo is the hero. Left/Right go to the previous/next photo, Play/Pause (or OK)
-  pauses and resumes, Back returns to the gallery with the last photo highlighted. Pausing shows a big circled pause
-  icon in the middle; resuming turns it into a circled play icon that fades away after a few seconds. The clock is
-  upper left, the system screensaver clock upper right. With Shuffle off, photos are newest first.
+  Opening Settings from Preview shows only the Preview toggles (Show Photo Date and Show Photo Location). Left/Right
+  move through the photos; `<` and `>` edge indicators appear briefly (only `>` on the first photo, only `<` on the last,
+  and both in between) before sliding out to the left/right, and reappear briefly when pressing Down from the top-right
+  icons.
+- **Slideshow:** visually identical to the system screensaver, with no buttons so the photo is the hero. Left/Right go
+  to the previous/next photo, Play/Pause (or OK) pauses and resumes, Back returns to the gallery with the last photo
+  highlighted. Pausing shows a big circled pause icon in the middle; resuming turns it into a circled play icon that
+  fades away after a few seconds. Both slideshow and screensaver show the clock in the upper-right corner. With Shuffle
+  off, photos are newest first.
 - **Date and location:** the Options key (Menu) opens a panel with Show Photo Date and Show Photo Location in the
   gallery and preview; the same two switches are in Settings. They apply to the gallery (date only), preview,
   slideshow and screensaver. The location is the suburb and abbreviated country, for example `Indooroopilly, AU`,

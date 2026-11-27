@@ -45,7 +45,7 @@
             android:name=".SettingsActivity"
             android:label="@string/settings_title"
             android:theme="@style/SettingsPanelTheme"
-            android:exported="false" />
+            android:exported="true" />
 
         <activity
             android:name=".FolderPickerActivity"

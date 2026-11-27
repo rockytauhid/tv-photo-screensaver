@@ -5,8 +5,10 @@ package com.photodream.tv
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,6 +16,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.Window
+import android.view.animation.AccelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -47,6 +50,10 @@ class PhotoPreviewActivity : Activity() {
     private lateinit var settingsButton: ImageButton
     private lateinit var dateLabel: TextView
     private lateinit var locationLabel: TextView
+    private lateinit var photoCountLabel: TextView
+    private lateinit var leftIndicator: ImageView
+    private lateinit var rightIndicator: ImageView
+    private var hideIndicatorsCallback: Runnable? = null
     private lateinit var optionsOverlay: RightOptionsOverlay
     private lateinit var dateOptionButton: TextView
     private lateinit var locationOptionButton: TextView
@@ -95,6 +102,16 @@ class PhotoPreviewActivity : Activity() {
         loadPhotoAndIndex()
     }
 
+    override fun onResume() {
+        super.onResume()
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        favoritePaths = PhotoFavorites.load(preferences)
+        updateFavoriteButton()
+        updateOptionLabels()
+        updateFooter()
+        refreshLocation()
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 &&
@@ -137,6 +154,7 @@ class PhotoPreviewActivity : Activity() {
             }
             KeyEvent.KEYCODE_DPAD_DOWN -> if (onTopIcons) {
                 contentRoot.requestFocus()
+                showDirectionIndicators()
                 return true
             }
         }
@@ -168,6 +186,10 @@ class PhotoPreviewActivity : Activity() {
     }
 
     override fun onDestroy() {
+        hideIndicatorsCallback?.let(mainHandler::removeCallbacks)
+        hideIndicatorsCallback = null
+        if (::leftIndicator.isInitialized) leftIndicator.animate().cancel()
+        if (::rightIndicator.isInitialized) rightIndicator.animate().cancel()
         indexWorker?.shutdownNow()
         cancelImageLoad()
         imageWorker?.shutdownNow()
@@ -207,7 +229,10 @@ class PhotoPreviewActivity : Activity() {
             R.drawable.ic_settings,
             getString(R.string.settings_button)
         ) {
-            startActivity(Intent(this, SettingsActivity::class.java))
+            startActivity(
+                Intent(this, SettingsActivity::class.java)
+                    .putExtra(SettingsActivity.PREVIEW_ONLY, true)
+            )
         }
         topIcons = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -215,29 +240,47 @@ class PhotoPreviewActivity : Activity() {
             listOf(favoriteButton, playSlideshowButton, settingsButton).forEachIndexed { index, button ->
                 addView(
                     button,
-                    LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                    LinearLayout.LayoutParams(dp(44), dp(44)).apply {
                         if (index > 0) leftMargin = dp(8)
                     }
                 )
             }
         }
+        val verticalEdge = dp(TV_EDGE_MARGIN_DP)
+        val headerTop = dp(TV_HEADER_TOP_MARGIN_DP)
+        val horizontalEdge = dp(TV_HORIZONTAL_MARGIN_DP)
+        photoCountLabel = TextView(this).apply {
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+            maxLines = 1
+        }
+        content.addView(
+            photoCountLabel,
+            FrameLayout.LayoutParams(-2, dp(44), Gravity.TOP or Gravity.LEFT).apply {
+                setMargins(horizontalEdge, headerTop, 0, 0)
+            }
+        )
         content.addView(
             topIcons,
-            FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.RIGHT).apply {
-                setMargins(0, dp(12), dp(20), 0)
+            FrameLayout.LayoutParams(-2, dp(44), Gravity.TOP or Gravity.RIGHT).apply {
+                setMargins(0, headerTop, horizontalEdge, 0)
             }
         )
 
         dateLabel = TextView(this).apply {
-            textSize = 14f
+            textSize = 15f
             setTextColor(Color.WHITE)
+            setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         locationLabel = TextView(this).apply {
-            textSize = 14f
+            textSize = 15f
             setTextColor(Color.WHITE)
+            setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -245,11 +288,15 @@ class PhotoPreviewActivity : Activity() {
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), 0, dp(20), 0)
-            addView(dateLabel, LinearLayout.LayoutParams(0, -1, 1f))
-            addView(locationLabel, LinearLayout.LayoutParams(0, -1, 1f))
+            addView(dateLabel, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(locationLabel, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        content.addView(footer, FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM))
+        content.addView(
+            footer,
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                setMargins(horizontalEdge, 0, horizontalEdge, verticalEdge)
+            }
+        )
 
         status = TextView(this).apply {
             text = getString(R.string.gallery_scanning)
@@ -258,6 +305,21 @@ class PhotoPreviewActivity : Activity() {
             gravity = Gravity.CENTER
         }
         content.addView(status, FrameLayout.LayoutParams(-1, -1))
+
+        leftIndicator = createDirectionIndicator(R.drawable.ic_chevron_left)
+        rightIndicator = createDirectionIndicator(R.drawable.ic_chevron_right)
+        content.addView(
+            leftIndicator,
+            FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER_VERTICAL or Gravity.LEFT).apply {
+                leftMargin = dp(20)
+            }
+        )
+        content.addView(
+            rightIndicator,
+            FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER_VERTICAL or Gravity.RIGHT).apply {
+                rightMargin = dp(20)
+            }
+        )
 
         optionsOverlay = RightOptionsOverlay(this)
         optionsOverlay.onDismissed = {
@@ -307,11 +369,89 @@ class PhotoPreviewActivity : Activity() {
                 photos = orderedPhotos
                 currentIndex = selectedIndex
                 indexReady = true
+                updatePhotoCount()
                 val queuedDirection = pendingNavigation
                 pendingNavigation = 0
-                if (queuedDirection != 0) movePhoto(queuedDirection)
+                if (queuedDirection != 0) {
+                    movePhoto(queuedDirection)
+                } else {
+                    showDirectionIndicators()
+                }
             }
         }
+    }
+
+    private fun createDirectionIndicator(iconRes: Int): ImageView =
+        ImageView(this).apply {
+            setImageResource(iconRes)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x88000000.toInt())
+                setStroke(dp(1), 0x80FFFFFF.toInt())
+            }
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            isFocusable = false
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+        }
+
+    private fun showDirectionIndicators() {
+        if (!indexReady || !::leftIndicator.isInitialized || !::rightIndicator.isInitialized) return
+        hideIndicatorsCallback?.let(mainHandler::removeCallbacks)
+        hideIndicatorsCallback = null
+        leftIndicator.animate().cancel()
+        rightIndicator.animate().cancel()
+
+        val state = directionIndicators(currentIndex, photos.size)
+        if (state.showLeft) {
+            leftIndicator.translationX = 0f
+            leftIndicator.alpha = 1f
+            leftIndicator.visibility = View.VISIBLE
+        } else {
+            leftIndicator.visibility = View.GONE
+        }
+        if (state.showRight) {
+            rightIndicator.translationX = 0f
+            rightIndicator.alpha = 1f
+            rightIndicator.visibility = View.VISIBLE
+        } else {
+            rightIndicator.visibility = View.GONE
+        }
+        if (!state.showLeft && !state.showRight) return
+
+        val callback = Runnable {
+            hideIndicatorsCallback = null
+            val slideDistance = dp(76).toFloat()
+            if (leftIndicator.visibility == View.VISIBLE) {
+                leftIndicator.animate()
+                    .translationX(-slideDistance)
+                    .alpha(0f)
+                    .setDuration(INDICATOR_EXIT_DURATION_MS)
+                    .setInterpolator(AccelerateInterpolator())
+                    .withEndAction {
+                        leftIndicator.visibility = View.GONE
+                        leftIndicator.translationX = 0f
+                    }
+                    .start()
+            }
+            if (rightIndicator.visibility == View.VISIBLE) {
+                rightIndicator.animate()
+                    .translationX(slideDistance)
+                    .alpha(0f)
+                    .setDuration(INDICATOR_EXIT_DURATION_MS)
+                    .setInterpolator(AccelerateInterpolator())
+                    .withEndAction {
+                        rightIndicator.visibility = View.GONE
+                        rightIndicator.translationX = 0f
+                    }
+                    .start()
+            }
+        }
+        hideIndicatorsCallback = callback
+        mainHandler.postDelayed(callback, INDICATOR_HOLD_DURATION_MS)
     }
 
     private fun startSlideshowFromPhoto() {
@@ -328,8 +468,24 @@ class PhotoPreviewActivity : Activity() {
             return
         }
         if (photos.isEmpty() || currentIndex !in photos.indices) return
-        currentIndex = PhotoFiles.wrapIndex(currentIndex, direction, photos.size)
+        val nextIndex = currentIndex + direction
+        if (nextIndex !in photos.indices) {
+            showDirectionIndicators()
+            return
+        }
+        currentIndex = nextIndex
+        updatePhotoCount()
         displayPhoto(photos[currentIndex])
+        showDirectionIndicators()
+    }
+
+    private fun updatePhotoCount() {
+        if (!::photoCountLabel.isInitialized) return
+        photoCountLabel.text = if (photos.isNotEmpty() && currentIndex in photos.indices) {
+            getString(R.string.preview_photo_count, currentIndex + 1, photos.size)
+        } else {
+            ""
+        }
     }
 
     private fun displayPhoto(file: File) {
@@ -463,10 +619,24 @@ class PhotoPreviewActivity : Activity() {
     private fun isOptionsKey(keyCode: Int): Boolean =
         keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS
 
+    internal data class DirectionIndicators(val showLeft: Boolean, val showRight: Boolean)
+
     companion object {
         private const val REQUEST_SLIDESHOW = 1
+        private const val INDICATOR_HOLD_DURATION_MS = 2500L
+        private const val INDICATOR_EXIT_DURATION_MS = 350L
         const val PHOTO_PATH = "photo_path"
         const val PHOTO_FOLDER = "photo_folder"
         const val PHOTO_FAVORITES_ONLY = "photo_favorites_only"
+
+        internal fun directionIndicators(index: Int, count: Int): DirectionIndicators {
+            if (count <= 1 || index !in 0 until count) {
+                return DirectionIndicators(showLeft = false, showRight = false)
+            }
+            return DirectionIndicators(
+                showLeft = index > 0,
+                showRight = index < count - 1
+            )
+        }
     }
 }

@@ -49,43 +49,64 @@ internal object PhotoImageDecoder {
         } catch (_: IOException) {
             ExifInterface.ORIENTATION_NORMAL
         }
-        val swapsDimensions = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
-            orientation == ExifInterface.ORIENTATION_ROTATE_270
+        val swapsDimensions = swapsDimensions(orientation)
         val width = if (swapsDimensions) bounds.outHeight else bounds.outWidth
         val height = if (swapsDimensions) bounds.outWidth else bounds.outHeight
         val sampleSize = chooseSampleSize(width, height, maxWidth, maxHeight, maxPixels)
-        val bitmap = BitmapFactory.decodeFile(
-            file.absolutePath,
-            BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-                inPreferredConfig = config
-            }
-        ) ?: return null
-
-        val rotation = when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> 0f
-        }
-        if (rotation == 0f) return bitmap
-
-        val rotated = try {
-            Bitmap.createBitmap(
-                bitmap,
-                0,
-                0,
-                bitmap.width,
-                bitmap.height,
-                Matrix().apply { postRotate(rotation) },
-                true
+        val bitmap = try {
+            BitmapFactory.decodeFile(
+                file.absolutePath,
+                BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = config
+                }
             )
+        } catch (_: OutOfMemoryError) {
+            null
+        } ?: return null
+
+        val transform = orientationTransform(orientation) ?: return bitmap
+        val matrix = Matrix().apply {
+            if (transform.flipHorizontal) postScale(-1f, 1f)
+            if (transform.flipVertical) postScale(1f, -1f)
+            if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
+        }
+        val transformed = try {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
         } catch (_: IllegalArgumentException) {
             bitmap.recycle()
             return null
+        } catch (_: OutOfMemoryError) {
+            bitmap.recycle()
+            return null
         }
-        if (rotated !== bitmap) bitmap.recycle()
-        return rotated
+        if (transformed !== bitmap) bitmap.recycle()
+        return transformed
+    }
+
+    internal data class OrientationTransform(
+        val rotationDegrees: Float = 0f,
+        val flipHorizontal: Boolean = false,
+        val flipVertical: Boolean = false
+    )
+
+    internal fun swapsDimensions(orientation: Int): Boolean =
+        orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
+            orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
+            orientation == ExifInterface.ORIENTATION_TRANSPOSE ||
+            orientation == ExifInterface.ORIENTATION_TRANSVERSE
+
+    internal fun orientationTransform(orientation: Int): OrientationTransform? = when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> OrientationTransform(rotationDegrees = 90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> OrientationTransform(rotationDegrees = 180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> OrientationTransform(rotationDegrees = 270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> OrientationTransform(flipHorizontal = true)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> OrientationTransform(flipVertical = true)
+        ExifInterface.ORIENTATION_TRANSPOSE ->
+            OrientationTransform(rotationDegrees = 90f, flipHorizontal = true)
+        ExifInterface.ORIENTATION_TRANSVERSE ->
+            OrientationTransform(rotationDegrees = 270f, flipHorizontal = true)
+        else -> null
     }
 
     /**
@@ -108,7 +129,9 @@ internal object PhotoImageDecoder {
         while (width / (sampleSize * 2) >= targetWidth && height / (sampleSize * 2) >= targetHeight) {
             sampleSize *= 2
         }
-        while ((width / sampleSize).toLong() * (height / sampleSize).toLong() > maxPixels) {
+        while ((width / sampleSize).toLong() * (height / sampleSize).toLong() > maxPixels &&
+            (width / sampleSize > 1 || height / sampleSize > 1)
+        ) {
             sampleSize *= 2
         }
         return sampleSize

@@ -40,4 +40,15 @@ internal object PhotoFavorites {
 
     fun filter(photos: List<File>, paths: Set<String>): List<File> =
         photos.filter { it.absolutePath in paths }
+
+    fun hasAnyInFolder(paths: Set<String>, folderPath: String?): Boolean {
+        if (folderPath.isNullOrEmpty() || paths.isEmpty()) return false
+        val normalizedFolder = File(folderPath).absolutePath
+        val prefix = if (normalizedFolder.endsWith(File.separator)) {
+            normalizedFolder
+        } else {
+            normalizedFolder + File.separator
+        }
+        return paths.any { it.startsWith(prefix) }
+    }
 }

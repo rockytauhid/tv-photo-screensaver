@@ -5,24 +5,45 @@ package com.photodream.tv
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Environment
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
+import android.view.Window
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
+import java.util.Locale
 
 class FolderPickerActivity : Activity() {
     private lateinit var currentFolder: File
+    private var configuredFolderPath: String? = null
     private lateinit var pathLabel: TextView
+    private lateinit var summaryLabel: TextView
+    private lateinit var upButton: TextView
+    private lateinit var useFolderButton: TextView
+    private lateinit var scroll: ScrollView
     private lateinit var folders: LinearLayout
-    private lateinit var useFolderButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        currentFolder = File(intent.getStringExtra(START_FOLDER) ?: STORAGE_ROOT)
+        window.requestFeature(Window.FEATURE_NO_TITLE)
+        configuredFolderPath = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+            .getString(SettingsActivity.PHOTO_FOLDER, null)
+            ?.let { File(it).absolutePath }
+        val requested = intent.getStringExtra(START_FOLDER)?.let(::File)
+        currentFolder = if (requested != null && requested.isDirectory) {
+            requested
+        } else {
+            File(STORAGE_ROOT)
+        }
         setContentView(createPickerView())
         showFolder(currentFolder)
     }
@@ -31,103 +52,388 @@ class FolderPickerActivity : Activity() {
         if (currentFolder.absolutePath == STORAGE_ROOT) {
             super.onBackPressed()
         } else {
-            showFolder(currentFolder.parentFile ?: File(STORAGE_ROOT))
+            navigateUp()
         }
     }
 
     private fun createPickerView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 24, 40, 24)
-            setBackgroundColor(0xFF101010.toInt())
+            setPadding(dp(40), dp(28), dp(40), dp(20))
+            setBackgroundColor(BACKGROUND_COLOR)
         }
-        root.addView(TextView(this).apply {
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val titleBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        titleBlock.addView(TextView(this).apply {
             text = getString(R.string.folder_picker_title)
-            textSize = 28f
-            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 26f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         })
         pathLabel = TextView(this).apply {
-            textSize = 16f
-            setTextColor(0xFFBBBBBB.toInt())
-            setPadding(0, 8, 0, 8)
+            textSize = 15f
+            setTextColor(SECONDARY_TEXT_COLOR)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.START
+            setPadding(0, dp(4), 0, 0)
         }
-        root.addView(pathLabel)
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        controls.addView(button(getString(R.string.go_up)) {
-            showFolder(currentFolder.parentFile ?: File(STORAGE_ROOT))
+        titleBlock.addView(pathLabel)
+        summaryLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(MUTED_TEXT_COLOR)
+            maxLines = 1
+            setPadding(0, dp(2), 0, 0)
+        }
+        titleBlock.addView(summaryLabel)
+        header.addView(titleBlock, LinearLayout.LayoutParams(0, -2, 1f).apply {
+            rightMargin = dp(20)
         })
-        useFolderButton = button(getString(R.string.use_this_folder)) {
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        upButton = createActionButton(getString(R.string.go_up)) { navigateUp() }
+        actions.addView(upButton, LinearLayout.LayoutParams(-2, dp(44)).apply {
+            rightMargin = dp(12)
+        })
+        useFolderButton = createActionButton(getString(R.string.use_this_folder)) {
             setResult(
                 RESULT_OK,
                 Intent().putExtra(SELECTED_FOLDER, currentFolder.absolutePath)
             )
             finish()
         }
-        controls.addView(useFolderButton)
-        root.addView(controls)
+        actions.addView(useFolderButton, LinearLayout.LayoutParams(-2, dp(44)))
+        header.addView(actions, LinearLayout.LayoutParams(-2, -2))
+        root.addView(header, LinearLayout.LayoutParams(-1, -2))
 
-        folders = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply {
+        val divider = View(this).apply {
+            setBackgroundColor(DIVIDER_COLOR)
+        }
+        root.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply {
+            topMargin = dp(16)
+            bottomMargin = dp(12)
+        })
+
+        folders = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(4), dp(2), dp(8))
+        }
+        scroll = ScrollView(this).apply {
             isFocusable = false
-            addView(folders)
+            isVerticalScrollBarEnabled = true
+            addView(folders, LinearLayout.LayoutParams(-1, -2))
         }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.folder_picker_hint)
+                textSize = 13f
+                setTextColor(MUTED_TEXT_COLOR)
+                setPadding(0, dp(10), 0, 0)
+            },
+            LinearLayout.LayoutParams(-1, -2)
+        )
         return root
     }
 
-    private fun showFolder(folder: File) {
+    private fun navigateUp() {
+        val previousPath = currentFolder.absolutePath
+        val parent = parentFolderOf(
+            currentFolder,
+            File(STORAGE_ROOT),
+            internalStorageDirectory()
+        )
+        showFolder(parent, focusPath = previousPath)
+    }
+
+    private fun showFolder(folder: File, focusPath: String? = null) {
         currentFolder = folder
         pathLabel.text = folder.absolutePath
         folders.removeAllViews()
+
         val atStorageRoot = folder.absolutePath == STORAGE_ROOT
+        upButton.isEnabled = !atStorageRoot
+        upButton.isFocusable = !atStorageRoot
         useFolderButton.isEnabled = !atStorageRoot
-        val children = folder.listFiles()
-            ?.filter { it.isDirectory && !it.name.startsWith(".") }
-            ?.sortedBy { it.name.lowercase() }
-            .orEmpty()
+        useFolderButton.isFocusable = !atStorageRoot
+        styleActionButton(upButton, upButton.hasFocus())
+        styleActionButton(useFolderButton, useFolderButton.hasFocus())
+
+        val entries: List<FolderEntry>
         if (atStorageRoot) {
-            folders.addView(TextView(this).apply {
-                text = getString(R.string.choose_storage_volume)
-                textSize = 18f
-                setTextColor(0xFFDDDDDD.toInt())
-                setPadding(8, 16, 8, 16)
-            })
+            summaryLabel.text = getString(R.string.choose_storage_volume)
+            entries = storageRootEntries(
+                folder.listFiles()?.toList().orEmpty(),
+                internalStorageDirectory(),
+                getString(R.string.internal_storage),
+                getString(R.string.internal_pictures)
+            )
+        } else {
+            val listed = folder.listFiles()?.toList().orEmpty()
+            val childFolders = listed
+                .filter { it.isDirectory && !it.name.startsWith(".") }
+                .sortedBy { it.name.lowercase(Locale.ROOT) }
+            val directPhotoCount = listed.count(PhotoFiles::isSupportedImage)
+            val subfolderText = resources.getQuantityString(
+                R.plurals.folder_subfolder_count,
+                childFolders.size,
+                childFolders.size
+            )
+            val photoText = resources.getQuantityString(
+                R.plurals.folder_photo_count,
+                directPhotoCount,
+                directPhotoCount
+            )
+            summaryLabel.text = getString(R.string.folder_summary, subfolderText, photoText)
+            entries = childFolders.map { FolderEntry(it.name, it) }
         }
-        if (children.isEmpty()) {
+
+        var focusTarget: View? = null
+        var firstRow: View? = null
+        entries.forEach { entry ->
+            val isCurrent = entry.directory.absolutePath == configuredFolderPath
+            val row = createFolderRow(entry.label, isCurrent) {
+                showFolder(entry.directory)
+            }
+            if (firstRow == null) firstRow = row
+            if (focusPath != null && entry.directory.absolutePath == focusPath) {
+                focusTarget = row
+            }
+            folders.addView(
+                row,
+                LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+            )
+        }
+
+        if (entries.isEmpty()) {
             folders.addView(TextView(this).apply {
                 text = getString(R.string.no_subfolders)
-                textSize = 18f
-                setTextColor(0xFFBBBBBB.toInt())
-                setPadding(8, 16, 8, 16)
+                textSize = 16f
+                setTextColor(SECONDARY_TEXT_COLOR)
+                setPadding(dp(16), dp(20), dp(16), dp(20))
             })
         }
-        children.forEach { child ->
-            folders.addView(button(child.name) { showFolder(child) })
+
+        val target = focusTarget ?: firstRow ?: if (useFolderButton.isEnabled) useFolderButton else upButton
+        scroll.post {
+            if (focusTarget == null) scroll.scrollTo(0, 0)
+            target.requestFocus()
         }
-        if (atStorageRoot) {
-            val internal = File(android.os.Environment.getExternalStorageDirectory(), "Pictures")
-            if (internal.isDirectory && children.none { it == internal }) {
-                folders.addView(button(getString(R.string.internal_pictures)) {
-                    showFolder(internal)
-                })
+    }
+
+    private fun createActionButton(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(dp(20), 0, dp(20), 0)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isClickable = true
+            styleActionButton(this, hasFocus = false)
+            setOnFocusChangeListener { view, hasFocus ->
+                styleActionButton(view as TextView, hasFocus)
+            }
+            setOnClickListener {
+                if (isEnabled) onClick()
+            }
+        }
+
+    private fun styleActionButton(button: TextView, hasFocus: Boolean) {
+        val enabled = button.isEnabled
+        button.setTextColor(
+            when {
+                !enabled -> DISABLED_TEXT_COLOR
+                hasFocus -> Color.WHITE
+                else -> ROW_TEXT_COLOR
+            }
+        )
+        button.setTypeface(null, if (hasFocus && enabled) Typeface.BOLD else Typeface.NORMAL)
+        button.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(100).toFloat()
+            setColor(
+                when {
+                    !enabled -> DISABLED_FILL_COLOR
+                    hasFocus -> FOCUSED_FILL_COLOR
+                    else -> ROW_FILL_COLOR
+                }
+            )
+            if (hasFocus && enabled) {
+                setStroke(dp(2), Color.WHITE)
+            } else {
+                setStroke(dp(1), if (enabled) SUBTLE_BORDER_COLOR else Color.TRANSPARENT)
             }
         }
     }
 
-    private fun button(label: String, onClick: () -> Unit): Button =
-        Button(this).apply {
+    private fun createFolderRow(
+        label: String,
+        isCurrent: Boolean,
+        onClick: () -> Unit
+    ): LinearLayout {
+        val icon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_folder)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val nameView = TextView(this).apply {
             text = label
             textSize = 18f
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val currentBadge = if (isCurrent) {
+            TextView(this).apply {
+                text = getString(R.string.folder_current_badge)
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(GOLD_COLOR)
+                setPadding(dp(12), 0, dp(12), 0)
+            }
+        } else {
+            null
+        }
+        val chevron = TextView(this).apply {
+            text = "›"
+            textSize = 22f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            minimumHeight = dp(56)
             isFocusable = true
             isFocusableInTouchMode = true
-            minHeight = 54
+            isClickable = true
+            addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                rightMargin = dp(14)
+            })
+            addView(nameView, LinearLayout.LayoutParams(0, -2, 1f))
+            if (currentBadge != null) {
+                addView(currentBadge, LinearLayout.LayoutParams(-2, -2))
+            }
+            addView(chevron, LinearLayout.LayoutParams(-2, -2))
             setOnClickListener { onClick() }
         }
 
+        fun applyRowStyle(focused: Boolean) {
+            row.background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(10).toFloat()
+                setColor(if (focused) FOCUSED_FILL_COLOR else ROW_FILL_COLOR)
+                if (focused) {
+                    setStroke(dp(2), Color.WHITE)
+                } else {
+                    setStroke(dp(1), SUBTLE_BORDER_COLOR)
+                }
+            }
+            icon.imageTintList = ColorStateList.valueOf(
+                when {
+                    isCurrent -> GOLD_COLOR
+                    focused -> Color.WHITE
+                    else -> SECONDARY_TEXT_COLOR
+                }
+            )
+            nameView.setTextColor(if (focused) Color.WHITE else ROW_TEXT_COLOR)
+            nameView.setTypeface(null, if (focused) Typeface.BOLD else Typeface.NORMAL)
+            chevron.setTextColor(if (focused) Color.WHITE else MUTED_TEXT_COLOR)
+        }
+
+        applyRowStyle(focused = false)
+        row.setOnFocusChangeListener { _, hasFocus -> applyRowStyle(hasFocus) }
+        return row
+    }
+
+    @Suppress("DEPRECATION")
+    private fun internalStorageDirectory(): File? =
+        Environment.getExternalStorageDirectory()?.takeIf { it.isDirectory }
+
+    internal data class FolderEntry(val label: String, val directory: File)
+
     companion object {
         const val SELECTED_FOLDER = "selected_folder"
-        private const val START_FOLDER = "start_folder"
+        const val START_FOLDER = "start_folder"
         private const val STORAGE_ROOT = "/storage"
+
+        private const val BACKGROUND_COLOR = 0xFF101010.toInt()
+        private const val ROW_FILL_COLOR = 0xFF1A1A1A.toInt()
+        private const val FOCUSED_FILL_COLOR = 0xFF333333.toInt()
+        private const val DISABLED_FILL_COLOR = 0xFF151515.toInt()
+        private const val SUBTLE_BORDER_COLOR = 0xFF282828.toInt()
+        private const val DIVIDER_COLOR = 0xFF2A2A2A.toInt()
+        private const val ROW_TEXT_COLOR = 0xFFE6E6E6.toInt()
+        private const val SECONDARY_TEXT_COLOR = 0xFFBBBBBB.toInt()
+        private const val MUTED_TEXT_COLOR = 0xFF888888.toInt()
+        private const val DISABLED_TEXT_COLOR = 0xFF555555.toInt()
+
+        private val ignoredStorageRootNames = setOf("emulated", "self")
+
+        internal fun parentFolderOf(
+            current: File,
+            storageRoot: File,
+            internalStorage: File?
+        ): File {
+            if (current.absolutePath == storageRoot.absolutePath) return storageRoot
+            if (internalStorage != null && current.absolutePath == internalStorage.absolutePath) {
+                return storageRoot
+            }
+            val parent = current.parentFile ?: return storageRoot
+            if (parent.parentFile?.absolutePath == storageRoot.absolutePath &&
+                parent.name.lowercase(Locale.ROOT) in ignoredStorageRootNames
+            ) {
+                return storageRoot
+            }
+            return parent
+        }
+
+        internal fun storageRootEntries(
+            storageChildren: List<File>,
+            internalStorage: File?,
+            internalStorageLabel: String,
+            internalPicturesLabel: String
+        ): List<FolderEntry> {
+            val entries = ArrayList<FolderEntry>()
+            val seenPaths = HashSet<String>()
+
+            if (internalStorage != null && internalStorage.isDirectory) {
+                if (seenPaths.add(internalStorage.absolutePath)) {
+                    entries.add(FolderEntry(internalStorageLabel, internalStorage))
+                }
+                val pictures = File(internalStorage, "Pictures")
+                if (pictures.isDirectory && seenPaths.add(pictures.absolutePath)) {
+                    entries.add(FolderEntry(internalPicturesLabel, pictures))
+                }
+            }
+
+            storageChildren
+                .filter {
+                    it.isDirectory &&
+                        !it.name.startsWith(".") &&
+                        it.name.lowercase(Locale.ROOT) !in ignoredStorageRootNames
+                }
+                .sortedBy { it.name.lowercase(Locale.ROOT) }
+                .forEach { volume ->
+                    if (seenPaths.add(volume.absolutePath)) {
+                        entries.add(FolderEntry(volume.name, volume))
+                    }
+                }
+
+            return entries
+        }
     }
 }

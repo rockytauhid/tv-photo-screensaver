@@ -6,6 +6,7 @@ package com.photodream.tv
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
@@ -26,6 +27,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.leanback.widget.HorizontalGridView
 import androidx.leanback.widget.OnChildViewHolderSelectedListener
@@ -58,6 +60,8 @@ class GalleryActivity : Activity() {
     private lateinit var rightPeek: ImageView
     private lateinit var leftPeekHolder: GalleryHolder
     private lateinit var rightPeekHolder: GalleryHolder
+    private lateinit var galleryFrame: FrameLayout
+    private lateinit var loadingOverlay: LinearLayout
     private lateinit var status: TextView
     private lateinit var adapter: GalleryAdapter
     private var photoFolderPath: String? = null
@@ -74,12 +78,15 @@ class GalleryActivity : Activity() {
     /** The one year whose months are shown in the shortcut row. */
     private var expandedYear: Int? = null
     private var scanGeneration = 0
-    private var reloadWhenResumed = false
+    private var loadedWithPermission = false
     private var refreshFavoritesWhenResumed = false
+    private var openedInitialSettings = false
     private var thumbnailSizeDp = 120
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openedInitialSettings =
+            savedInstanceState?.getBoolean(OPENED_INITIAL_SETTINGS, false) ?: false
         window.requestFeature(Window.FEATURE_NO_TITLE)
         setContentView(createContentView())
         adapter = GalleryAdapter()
@@ -122,19 +129,40 @@ class GalleryActivity : Activity() {
         loadPhotos()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(OPENED_INITIAL_SETTINGS, openedInitialSettings)
+    }
+
     override fun onResume() {
         super.onResume()
-        if (reloadWhenResumed) {
-            reloadWhenResumed = false
+        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val currentFolder = preferences.getString(SettingsActivity.PHOTO_FOLDER, null)
+        val hasPermission = hasPhotoPermission()
+        if (currentFolder != photoFolderPath || hasPermission != loadedWithPermission) {
+            refreshFavoritesWhenResumed = false
             loadPhotos()
         } else if (refreshFavoritesWhenResumed) {
             refreshFavoritesWhenResumed = false
             refreshFavoriteFilter()
+            updateSelectedMetadata(grid.selectedPosition)
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_SETTINGS) {
+            val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+            val currentFolder = preferences.getString(SettingsActivity.PHOTO_FOLDER, null)
+            val hasPermission = hasPhotoPermission()
+            if (currentFolder != photoFolderPath || hasPermission != loadedWithPermission) {
+                loadPhotos()
+            } else {
+                refreshFavoriteFilter()
+                updateSelectedMetadata(grid.selectedPosition)
+            }
+            return
+        }
         if ((requestCode == REQUEST_SLIDESHOW || requestCode == REQUEST_PREVIEW) &&
             resultCode == RESULT_OK
         ) {
@@ -152,21 +180,6 @@ class GalleryActivity : Activity() {
         ) {
             startSlideshowFromSelection()
             return true
-        }
-        if (event.action == KeyEvent.ACTION_DOWN && grid.hasFocus() && adapter.itemCount > 0) {
-            val selectedPosition = grid.selectedPosition
-            val delta = when {
-                event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT && selectedPosition == 0 -> -1
-                event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT &&
-                    selectedPosition == adapter.itemCount - 1 -> 1
-                else -> 0
-            }
-            if (delta != 0) {
-                grid.setSelectedPosition(
-                    PhotoFiles.wrapIndex(selectedPosition, delta, adapter.itemCount)
-                )
-                return true
-            }
         }
         return super.dispatchKeyEvent(event)
     }
@@ -210,19 +223,23 @@ class GalleryActivity : Activity() {
     }
 
     private fun createContentView(): View {
-        val root = FrameLayout(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(12))
+        val verticalEdge = dp(TV_EDGE_MARGIN_DP)
+        val headerTop = dp(TV_HEADER_TOP_MARGIN_DP)
+        val horizontalEdge = dp(TV_HORIZONTAL_MARGIN_DP)
+        val shortcutInnerPadding = dp(SHORTCUT_HORIZONTAL_PADDING_DP)
+        val root = FrameLayout(this).apply {
             setBackgroundColor(0xFF101010.toInt())
+            clipChildren = false
+            clipToPadding = false
         }
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTitle = TextView(this).apply {
             text = getString(R.string.app_name)
-            textSize = 16f
+            textSize = 18f
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -235,7 +252,7 @@ class GalleryActivity : Activity() {
         ) {
             toggleFavoritesFilter()
         }
-        header.addView(favoritesFilterButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+        header.addView(favoritesFilterButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             setMargins(dp(8), 0, dp(4), 0)
         })
         startSlideshowButton = createIconButton(
@@ -244,18 +261,22 @@ class GalleryActivity : Activity() {
         ) {
             startSlideshowFromSelection()
         }
-        header.addView(startSlideshowButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+        header.addView(startSlideshowButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             setMargins(dp(8), 0, dp(8), 0)
         })
         settingsButton = createIconButton(
             R.drawable.ic_settings,
             getString(R.string.settings_button)
         ) {
-            reloadWhenResumed = true
-            startActivity(Intent(this, SettingsActivity::class.java))
+            openSettings()
         }
-        header.addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)))
-        content.addView(header, LinearLayout.LayoutParams(-1, -2))
+        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)))
+        root.addView(
+            header,
+            FrameLayout.LayoutParams(-1, dp(44), Gravity.TOP).apply {
+                setMargins(horizontalEdge, headerTop, horizontalEdge, 0)
+            }
+        )
 
         dateShortcuts = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -265,34 +286,47 @@ class GalleryActivity : Activity() {
             isHorizontalScrollBarEnabled = false
             isFocusable = false
             clipToPadding = false
+            // Offset by inner shortcut padding so the Year text aligns exactly with horizontalEdge.
+            setPadding(
+                (horizontalEdge - shortcutInnerPadding).coerceAtLeast(0),
+                dp(2),
+                horizontalEdge,
+                dp(2)
+            )
             addView(dateShortcuts, ViewGroup.LayoutParams(-2, -1))
+            visibility = View.GONE
         }
-        content.addView(shortcutsScroll, LinearLayout.LayoutParams(-1, -2))
-        shortcutsScroll.visibility = View.GONE
+        root.addView(
+            shortcutsScroll,
+            FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
+                topMargin = headerTop + dp(42)
+            }
+        )
 
-        status = TextView(this).apply {
-            text = getString(R.string.gallery_scanning)
-            textSize = 16f
-            setTextColor(0xFFBBBBBB.toInt())
-            setPadding(0, dp(6), 0, dp(8))
-        }
-        content.addView(status)
+        val screenWidthDp =
+            (resources.displayMetrics.widthPixels / resources.displayMetrics.density).toInt()
         val screenHeightDp =
             (resources.displayMetrics.heightPixels / resources.displayMetrics.density).toInt()
-        val galleryHeightDp = (screenHeightDp - 160).coerceIn(192, 384)
-        thumbnailSizeDp = ((galleryHeightDp - 32) / 3).coerceIn(56, 120)
-        val gridHeightDp = thumbnailSizeDp * 3 + 24
+        thumbnailSizeDp = computeThumbnailSizeDp(screenWidthDp, screenHeightDp)
+        val gridHeightDp = thumbnailSizeDp * 3 + GRID_SPACING_DP * 2 + GRID_VERTICAL_PADDING_DP * 2
         grid = HorizontalGridView(this).apply {
             setNumRows(3)
-            horizontalSpacing = dp(8)
-            verticalSpacing = dp(8)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
+            horizontalSpacing = dp(GRID_SPACING_DP)
+            verticalSpacing = dp(GRID_SPACING_DP)
+            // Start aligned with the title/Year/date on the left; scroll full-width once past the first page,
+            // and use the full right edge with no right padding.
+            setPadding(horizontalEdge, dp(GRID_VERTICAL_PADDING_DP), 0, dp(GRID_VERTICAL_PADDING_DP))
             clipToPadding = false
+            clipChildren = false
             isFocusable = true
             isFocusableInTouchMode = true
             isHorizontalScrollBarEnabled = false
         }
-        val galleryFrame = FrameLayout(this)
+        galleryFrame = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            visibility = View.INVISIBLE
+        }
         galleryFrame.addView(grid, FrameLayout.LayoutParams(-1, -1))
         leftPeek = createPeekImage()
         rightPeek = createPeekImage()
@@ -301,31 +335,90 @@ class GalleryActivity : Activity() {
         galleryFrame.addView(
             leftPeek,
             FrameLayout.LayoutParams(dp(24), dp(90), Gravity.TOP or Gravity.LEFT).apply {
-                topMargin = dp(4)
+                topMargin = dp(GRID_VERTICAL_PADDING_DP)
             }
         )
         galleryFrame.addView(
             rightPeek,
             FrameLayout.LayoutParams(dp(24), dp(90), Gravity.TOP or Gravity.RIGHT).apply {
-                topMargin = dp(4)
+                topMargin = dp(GRID_VERTICAL_PADDING_DP)
             }
         )
-        content.addView(galleryFrame, LinearLayout.LayoutParams(-1, dp(gridHeightDp)))
-        root.addView(content, FrameLayout.LayoutParams(-1, -1))
+        val galleryContainer = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            addView(galleryFrame, FrameLayout.LayoutParams(-1, dp(gridHeightDp), Gravity.CENTER))
+        }
+        root.addView(
+            galleryContainer,
+            FrameLayout.LayoutParams(-1, -1).apply {
+                topMargin = headerTop + dp(78)
+                bottomMargin = verticalEdge + dp(24)
+            }
+        )
 
-        // Only the date is shown here (bottom left); the location is left out to keep the grid snappy.
+        loadingOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF101010.toInt())
+            visibility = View.GONE
+            addView(
+                ImageView(this@GalleryActivity).apply {
+                    setImageResource(R.mipmap.ic_launcher)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                },
+                LinearLayout.LayoutParams(dp(64), dp(64))
+            )
+            addView(
+                TextView(this@GalleryActivity).apply {
+                    text = getString(R.string.app_name)
+                    textSize = 24f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.WHITE)
+                    setPadding(0, dp(14), 0, dp(20))
+                },
+                LinearLayout.LayoutParams(-2, -2)
+            )
+            addView(
+                ProgressBar(this@GalleryActivity).apply {
+                    isIndeterminate = true
+                    indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+                },
+                LinearLayout.LayoutParams(dp(36), dp(36))
+            )
+        }
+        root.addView(loadingOverlay, FrameLayout.LayoutParams(-1, -1))
+
+        status = TextView(this).apply {
+            textSize = 18f
+            setTextColor(0xFFBBBBBB.toInt())
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        root.addView(
+            status,
+            FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply {
+                setMargins(horizontalEdge, 0, horizontalEdge, 0)
+            }
+        )
+
+        // Only the date is shown here (bottom left); aligned with the title, Year, and bottom safe margin.
         selectedDateLabel = TextView(this).apply {
-            textSize = 14f
+            textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(dp(20), 0, dp(20), 0)
         }
         root.addView(
             selectedDateLabel,
-            FrameLayout.LayoutParams(-1, dp(36), Gravity.BOTTOM)
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                setMargins(horizontalEdge, 0, horizontalEdge, verticalEdge)
+            }
         )
+
+        loadingOverlay.bringToFront()
 
         optionsOverlay = RightOptionsOverlay(this)
         optionsOverlay.onDismissed = { grid.requestFocus() }
@@ -355,6 +448,16 @@ class GalleryActivity : Activity() {
 
     private fun createPeekHolder(image: ImageView): GalleryHolder =
         GalleryHolder(image, image, TextView(this), null)
+
+    private fun openSettings() {
+        startActivityForResult(Intent(this, SettingsActivity::class.java), REQUEST_SETTINGS)
+    }
+
+    private fun openSettingsOnFirstRun() {
+        if (openedInitialSettings) return
+        openedInitialSettings = true
+        openSettings()
+    }
 
     private fun openPreview(position: Int) {
         refreshFavoritesWhenResumed = true
@@ -426,10 +529,10 @@ class GalleryActivity : Activity() {
         val visiblePositions = (0 until grid.childCount)
             .map { grid.getChildAdapterPosition(grid.getChildAt(it)) }
             .filter { it >= 0 }
-        val previous = PhotoFiles.wrapIndex(selectedPosition, -1, count)
-        val next = PhotoFiles.wrapIndex(selectedPosition, 1, count)
-        val showLeft = previous !in visiblePositions
-        val showRight = next !in visiblePositions
+        val previous = selectedPosition - 1
+        val next = selectedPosition + 1
+        val showLeft = previous >= 0 && previous !in visiblePositions
+        val showRight = next < count && next !in visiblePositions
 
         leftPeek.visibility = if (showLeft) View.VISIBLE else View.GONE
         rightPeek.visibility = if (showRight) View.VISIBLE else View.GONE
@@ -456,19 +559,18 @@ class GalleryActivity : Activity() {
         updateFavoritesFilterButton()
         dateShortcuts.removeAllViews()
         shortcutsScroll.visibility = View.GONE
-        status.visibility = View.VISIBLE
-        updateHeaderCount(0)
+        galleryFrame.visibility = View.INVISIBLE
+        loadingOverlay.visibility = View.GONE
+        status.visibility = View.GONE
+        headerTitle.text = getString(R.string.app_name)
 
-        val permission = if (Build.VERSION.SDK_INT >= 33) {
-            "android.permission.READ_MEDIA_IMAGES"
-        } else {
-            "android.permission.READ_EXTERNAL_STORAGE"
-        }
-        if (Build.VERSION.SDK_INT >= 23 &&
-            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
-        ) {
+        val hasPermission = hasPhotoPermission()
+        loadedWithPermission = hasPermission
+        if (!hasPermission) {
             status.setText(R.string.permission_required)
+            status.visibility = View.VISIBLE
             settingsButton.requestFocus()
+            openSettingsOnFirstRun()
             return
         }
 
@@ -476,12 +578,13 @@ class GalleryActivity : Activity() {
         val folderPath = preferences.getString(SettingsActivity.PHOTO_FOLDER, null)
         if (folderPath == null) {
             status.setText(R.string.gallery_no_folder)
+            status.visibility = View.VISIBLE
             settingsButton.requestFocus()
+            openSettingsOnFirstRun()
             return
         }
         photoFolderPath = folderPath
-        updateHeaderScanning()
-        status.setText(R.string.gallery_scanning)
+        loadingOverlay.visibility = View.VISIBLE
 
         scanExecutor = ThreadPoolExecutor(
             1,
@@ -535,6 +638,7 @@ class GalleryActivity : Activity() {
             )
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
+                loadingOverlay.visibility = View.GONE
                 allPhotos = foundPhotos
                 allTimeline = allPhotoTimeline
                 timeline = activeTimeline
@@ -545,6 +649,7 @@ class GalleryActivity : Activity() {
                 startSlideshowButton.isEnabled = foundPhotos.isNotEmpty()
                 updateHeaderCount(if (showFavoritesOnly) activePhotos.size else foundPhotos.size)
                 status.visibility = if (foundPhotos.isEmpty()) View.VISIBLE else View.GONE
+                galleryFrame.visibility = if (foundPhotos.isEmpty()) View.INVISIBLE else View.VISIBLE
                 if (foundPhotos.isEmpty()) {
                     status.setText(R.string.gallery_no_photos)
                     rebuildDateShortcuts()
@@ -555,6 +660,16 @@ class GalleryActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun hasPhotoPermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= 33) {
+            "android.permission.READ_MEDIA_IMAGES"
+        } else {
+            "android.permission.READ_EXTERNAL_STORAGE"
+        }
+        return Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun toggleFavoritesFilter() {
@@ -570,7 +685,10 @@ class GalleryActivity : Activity() {
 
     private fun refreshFavoriteFilter() {
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        favoritePaths = PhotoFavorites.load(preferences)
+        val newFavoritePaths = PhotoFavorites.load(preferences)
+        val previousFavoritesOnly = favoritesOnly
+        val previousFavoritePaths = favoritePaths
+        favoritePaths = newFavoritePaths
         val hasFavorites = hasFavoritesInFolder()
         val hasSavedFilter = preferences.contains(SettingsActivity.PLAY_FAVORITES_ONLY)
         val requestedFavoritesOnly = preferences.getBoolean(
@@ -586,7 +704,11 @@ class GalleryActivity : Activity() {
                 .apply()
         }
         updateFavoritesFilterButton()
-        applyFilter(currentPhotoPath())
+        if (favoritesOnly != previousFavoritesOnly ||
+            (favoritesOnly && favoritePaths != previousFavoritePaths)
+        ) {
+            applyFilter(currentPhotoPath())
+        }
     }
 
     /** Rebuilds the grid for the current All/Favorites filter and keeps [keepPath] highlighted if it is still shown. */
@@ -746,19 +868,21 @@ class GalleryActivity : Activity() {
         return tag == "year-${date.year}" || tag == "month-${date.year}-${date.month}"
     }
 
-    /** Gold when it matches the highlighted photo, underlined while it has focus. */
+    /** Gold when it matches the highlighted photo, complete pill border while it has focus. */
     private fun styleShortcut(view: TextView) {
         val selected = isShortcutSelected(view)
-        view.setTextColor(if (selected) GOLD_COLOR else 0xFFE0E0E0.toInt())
+        view.setTextColor(
+            when {
+                selected -> GOLD_COLOR
+                view.hasFocus() -> Color.WHITE
+                else -> 0xFFE0E0E0.toInt()
+            }
+        )
         view.setTypeface(
             null,
             if (selected || view.hasFocus()) Typeface.BOLD else Typeface.NORMAL
         )
-        view.paintFlags = if (view.hasFocus()) {
-            view.paintFlags or Paint.UNDERLINE_TEXT_FLAG
-        } else {
-            view.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv()
-        }
+        view.background = if (view.hasFocus()) focusRing(circle = false) else null
     }
 
     private fun updateFavoritesFilterButton() {
@@ -784,15 +908,16 @@ class GalleryActivity : Activity() {
         TextView(this).apply {
             this.tag = tag
             text = label
-            textSize = 18f
+            textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(0xFFE0E0E0.toInt())
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            minHeight = dp(48)
+            setPadding(dp(SHORTCUT_HORIZONTAL_PADDING_DP), dp(4), dp(SHORTCUT_HORIZONTAL_PADDING_DP), dp(4))
+            minHeight = dp(34)
             isFocusable = true
             isFocusableInTouchMode = true
             isClickable = true
-            setBackgroundColor(Color.TRANSPARENT)
+            background = null
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(4) }
             setOnFocusChangeListener { view, _ -> styleShortcut(view as TextView) }
             setOnClickListener { onClick() }
         }
@@ -926,7 +1051,7 @@ class GalleryActivity : Activity() {
                 if (clickedPosition != RecyclerView.NO_POSITION) openPreview(clickedPosition)
             }
             val highlighted = position == highlightedPosition && grid.hasFocus()
-            holder.focusBorder?.visibility = if (highlighted) View.VISIBLE else View.GONE
+            applyHighlight(holder, highlighted, animate = false)
 
             val cached = thumbnailCache.get(key)
             if (cached != null) {
@@ -954,6 +1079,7 @@ class GalleryActivity : Activity() {
 
         override fun onViewRecycled(holder: GalleryHolder) {
             cancel(holder)
+            applyHighlight(holder, highlighted = false, animate = false)
             holder.boundKey = null
             holder.boundPosition = RecyclerView.NO_POSITION
             holder.image.tag = null
@@ -975,10 +1101,28 @@ class GalleryActivity : Activity() {
                 val cell = grid.getChildAt(childIndex)
                 if (grid.getChildAdapterPosition(cell) == position) {
                     val holder = grid.getChildViewHolder(cell) as? GalleryHolder ?: return
-                    holder.focusBorder?.visibility =
-                        if (highlighted) View.VISIBLE else View.GONE
+                    applyHighlight(holder, highlighted, animate = true)
                     return
                 }
+            }
+        }
+
+        private fun applyHighlight(holder: GalleryHolder, highlighted: Boolean, animate: Boolean) {
+            holder.focusBorder?.visibility = if (highlighted) View.VISIBLE else View.GONE
+            val scale = if (highlighted) 1.14f else 1f
+            val elevation = if (highlighted) dp(10).toFloat() else 0f
+            holder.root.elevation = elevation
+            holder.root.translationZ = elevation
+            if (animate) {
+                holder.root.animate()
+                    .scaleX(scale)
+                    .scaleY(scale)
+                    .setDuration(120)
+                    .start()
+            } else {
+                holder.root.animate().cancel()
+                holder.root.scaleX = scale
+                holder.root.scaleY = scale
             }
         }
 
@@ -1053,17 +1197,18 @@ class GalleryActivity : Activity() {
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
             root.addView(focusBorder, FrameLayout.LayoutParams(-1, -1))
-            root.setOnFocusChangeListener { _, hasFocus ->
-                focusBorder.visibility = if (hasFocus) View.VISIBLE else View.GONE
-            }
-            root.isClickable = true
-            root.layoutParams = ViewGroup.LayoutParams(dp(thumbnailSizeDp), dp(thumbnailSizeDp))
-            return GalleryHolder(
+            val holder = GalleryHolder(
                 root,
                 image,
                 placeholder,
                 focusBorder
             )
+            root.setOnFocusChangeListener { _, hasFocus ->
+                applyHighlight(holder, hasFocus, animate = true)
+            }
+            root.isClickable = true
+            root.layoutParams = ViewGroup.LayoutParams(dp(thumbnailSizeDp), dp(thumbnailSizeDp))
+            return holder
         }
 
         private fun cancel(holder: GalleryHolder) {
@@ -1160,8 +1305,23 @@ class GalleryActivity : Activity() {
     }
 
     companion object {
-        private const val REQUEST_PREVIEW = 2
         private const val REQUEST_SLIDESHOW = 1
+        private const val REQUEST_PREVIEW = 2
+        private const val REQUEST_SETTINGS = 3
         private const val MAX_FAILED_THUMBNAILS = 128
+        private const val OPENED_INITIAL_SETTINGS = "opened_initial_settings"
+        private const val GRID_SPACING_DP = 10
+        private const val GRID_VERTICAL_PADDING_DP = 14
+        private const val SHORTCUT_HORIZONTAL_PADDING_DP = 10
+        private const val TARGET_VISIBLE_COLUMNS = 7.75
+
+        internal fun computeThumbnailSizeDp(screenWidthDp: Int, screenHeightDp: Int): Int {
+            val widthBudget = (screenWidthDp - TV_HORIZONTAL_MARGIN_DP - GRID_SPACING_DP * 7).coerceAtLeast(1)
+            val byWidth = (widthBudget / TARGET_VISIBLE_COLUMNS).toInt()
+            val verticalChrome = TV_EDGE_MARGIN_DP * 2 + 78 + 24
+            val availableHeight = (screenHeightDp - verticalChrome).coerceAtLeast(180)
+            val byHeight = (availableHeight - GRID_SPACING_DP * 2 - GRID_VERTICAL_PADDING_DP * 2) / 3
+            return minOf(byWidth, byHeight).coerceIn(56, 136)
+        }
     }
 }
