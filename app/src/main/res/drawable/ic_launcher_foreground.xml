@@ -1,18 +1,48 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M24,27h60v54H24z" />
-    <path
-        android:fillColor="#173244"
-        android:pathData="M30,33h48v42H30z" />
-    <path
-        android:fillColor="#FFFFC107"
-        android:pathData="M65,39a8,8 0,1 0,0 16a8,8 0,0 0,0 -16z" />
-    <path
-        android:fillColor="#FF32BFA8"
-        android:pathData="M31,70l13,-17 10,11 8,-9 15,15z" />
+
+    <!-- Two photos fanned out behind the front one: a gallery. -->
+    <group android:rotation="-9" android:pivotX="54" android:pivotY="56">
+        <path android:fillColor="#59FFFFFF" android:pathData="M26,32h56v48h-56z" />
+    </group>
+    <group android:rotation="9" android:pivotX="54" android:pivotY="56">
+        <path android:fillColor="#80FFFFFF" android:pathData="M26,32h56v48h-56z" />
+    </group>
+
+    <!-- Front photo: white frame, dusk sky inside. -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M26,32h56v48h-56z" />
+    <group>
+        <clip-path android:pathData="M30,36h48v34h-48z" />
+        <path android:pathData="M30,36h48v34h-48z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="54"
+                    android:startY="36"
+                    android:endX="54"
+                    android:endY="70">
+                    <item android:offset="0" android:color="#FF1E2F63" />
+                    <item android:offset="0.6" android:color="#FF6B4A9A" />
+                    <item android:offset="1" android:color="#FFE58A5B" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <!-- Stars -->
+        <path android:fillColor="#FFFFFFFF"
+            android:pathData="M38,40l0.9,1.9l1.9,0.9l-1.9,0.9l-0.9,1.9l-0.9,-1.9l-1.9,-0.9l1.9,-0.9z" />
+        <path android:fillColor="#CCFFFFFF"
+            android:pathData="M52,44l0.6,1.2l1.2,0.6l-1.2,0.6l-0.6,1.2l-0.6,-1.2l-1.2,-0.6l1.2,-0.6z" />
+        <!-- Crescent moon (gold = the app's accent) -->
+        <path android:fillColor="#FFFFC107"
+            android:pathData="M67.6,38A7,7 0,1 0,67.6 50A6,6 0,0 1,67.6 38z" />
+        <!-- Hills (teal = the app's other accent) -->
+        <path android:fillColor="#FF1F8F7E"
+            android:pathData="M30,70v-10l12,-10l10,12l8,-8l18,14v2z" />
+        <path android:fillColor="#FF32BFA8"
+            android:pathData="M30,70v-6l10,-6l10,10l8,-8l20,10z" />
+    </group>
 </vector>
