@@ -181,6 +181,14 @@ Rules for cloud code:
   `/storage/self` entries), high-contrast focus borders, direct subfolder/photo counts, a gold `Current` badge on the
   active folder, and focus restoration when navigating up. Direct file browsing is intended for the Android 8 target;
   scoped-storage behaviour on newer Android versions is not verified.
+- The local photo index is persisted in app-private storage (`photo_index.tsv`, zero external dependencies) via
+  `PhotoIndex`, `LocalPhotoSource`, and `PhotoRepository`. On repeat launches, Gallery, Preview, Slideshow, and
+  `PhotoDream` open immediately from the cached index; Gallery reconciles quietly in the background and reads EXIF
+  only for new or modified files.
+- `PhotoPreferences` wraps shared preferences in one typed class.
+- Both `PhotoDream` and `SlideshowActivity` prefetch one frame ahead on their single worker thread while releasing
+  outgoing transition bitmaps on animation end (staying within the 3-frame bitmap budget), and cap consecutive decode
+  failures so an unplugged drive or unreadable collection falls back cleanly to the status message and clock.
 - The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes within the
   display and heap budget, applies EXIF orientation (including mirrored orientations), reads EXIF capture date and GPS
   coordinates when present, and gracefully skips unreadable or out-of-memory files.

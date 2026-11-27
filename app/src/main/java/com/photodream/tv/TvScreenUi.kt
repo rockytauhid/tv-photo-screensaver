@@ -364,26 +364,48 @@ internal class SlideshowStage(context: Context, handler: Handler) {
 
         when (transition) {
             SettingsActivity.FADE -> {
-                if (outgoing.drawable == null) outgoing.visibility = View.INVISIBLE
+                if (outgoing.drawable == null) {
+                    outgoing.visibility = View.INVISIBLE
+                } else {
+                    outgoing.animate().alpha(0f).setDuration(900)
+                        .withEndAction { releaseOutgoing(outgoing, bitmap) }
+                        .start()
+                }
                 incoming.alpha = 0f
                 incoming.animate().alpha(1f).setDuration(900).start()
-                outgoing.animate().alpha(0f).setDuration(900)
-                    .withEndAction { outgoing.visibility = View.INVISIBLE }
-                    .start()
             }
             SettingsActivity.SLIDE -> {
                 incoming.translationX = slideDistance
                 incoming.animate().translationX(0f).setDuration(700).start()
-                outgoing.animate().translationX(-slideDistance).setDuration(700)
-                    .withEndAction {
-                        outgoing.visibility = View.INVISIBLE
-                        outgoing.translationX = 0f
-                    }
-                    .start()
+                if (outgoing.drawable == null) {
+                    outgoing.visibility = View.INVISIBLE
+                } else {
+                    outgoing.animate().translationX(-slideDistance).setDuration(700)
+                        .withEndAction { releaseOutgoing(outgoing, bitmap) }
+                        .start()
+                }
             }
-            else -> outgoing.visibility = View.INVISIBLE
+            else -> releaseOutgoing(outgoing, bitmap)
         }
         visibleImage = newIndex
+    }
+
+    private fun releaseOutgoing(outgoing: ImageView, activeBitmap: Bitmap) {
+        outgoing.visibility = View.INVISIBLE
+        outgoing.translationX = 0f
+        val oldBitmap = (outgoing.drawable as? BitmapDrawable)?.bitmap
+        outgoing.setImageDrawable(null)
+        if (oldBitmap != null && oldBitmap !== activeBitmap) oldBitmap.recycle()
+    }
+
+    companion object {
+        const val MAX_CONSECUTIVE_FAILURES = 5
+        const val FAILURE_SKIP_DELAY_MS = 1000L
+
+        internal fun shouldStopAfterFailure(consecutiveFailures: Int, totalPhotos: Int): Boolean {
+            if (totalPhotos <= 0) return true
+            return consecutiveFailures >= minOf(totalPhotos, MAX_CONSECUTIVE_FAILURES)
+        }
     }
 
     fun clearImages(preserveVisible: Boolean = false) {

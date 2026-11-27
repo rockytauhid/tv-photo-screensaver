@@ -77,6 +77,8 @@ class GalleryActivity : Activity() {
 
     /** The one year whose months are shown in the shortcut row. */
     private var expandedYear: Int? = null
+    private lateinit var preferences: PhotoPreferences
+    private lateinit var repository: PhotoRepository
     private var scanGeneration = 0
     private var loadedWithPermission = false
     private var refreshFavoritesWhenResumed = false
@@ -85,6 +87,8 @@ class GalleryActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        preferences = PhotoPreferences(this)
+        repository = PhotoRepository(this)
         openedInitialSettings =
             savedInstanceState?.getBoolean(OPENED_INITIAL_SETTINGS, false) ?: false
         window.requestFeature(Window.FEATURE_NO_TITLE)
@@ -574,8 +578,7 @@ class GalleryActivity : Activity() {
             return
         }
 
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val folderPath = preferences.getString(SettingsActivity.PHOTO_FOLDER, null)
+        val folderPath = preferences.photoFolder
         if (folderPath == null) {
             status.setText(R.string.gallery_no_folder)
             status.visibility = View.VISIBLE
@@ -584,7 +587,14 @@ class GalleryActivity : Activity() {
             return
         }
         photoFolderPath = folderPath
-        loadingOverlay.visibility = View.VISIBLE
+
+        val source = repository.localSource(folderPath)
+        val cachedEntries = source.loadCached()
+        if (cachedEntries.isNotEmpty()) {
+            applyLoadedEntries(cachedEntries, keepPath = null)
+        } else {
+            loadingOverlay.visibility = View.VISIBLE
+        }
 
         scanExecutor = ThreadPoolExecutor(
             1,
@@ -595,70 +605,74 @@ class GalleryActivity : Activity() {
             ThreadFactory { runnable -> Thread(runnable, "photo-index").apply { isDaemon = true } }
         )
         scanExecutor?.execute {
-            val foundPhotos = PhotoFiles.listImages(File(folderPath))
-            val allPhotoTimeline =
-                PhotoFiles.buildTimeline(foundPhotos, PhotoMetadata::captureTimeMillis)
-            val initialFavoritePaths = PhotoFavorites.load(preferences)
-            val favoritesAvailable =
-                foundPhotos.any { it.absolutePath in initialFavoritePaths }
-            val showFavoritesOnly = (
-                preferences.getBoolean(
-                    SettingsActivity.PLAY_FAVORITES_ONLY,
-                    favoritesAvailable
-                ) && favoritesAvailable
-            )
-            if ((preferences.contains(SettingsActivity.PLAY_FAVORITES_ONLY) &&
-                    preferences.getBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false) !=
-                    showFavoritesOnly
-                ) ||
-                (!preferences.contains(SettingsActivity.PLAY_FAVORITES_ONLY) &&
-                    showFavoritesOnly)
-            ) {
-                preferences.edit()
-                    .putBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, showFavoritesOnly)
-                    .apply()
-            }
-            val activePhotos = if (showFavoritesOnly) {
-                PhotoFavorites.filter(foundPhotos, initialFavoritePaths)
-            } else {
-                foundPhotos
-            }
-            val activeTimeline = if (showFavoritesOnly) {
-                PhotoFiles.subsetTimeline(activePhotos, allPhotoTimeline)
-            } else {
-                allPhotoTimeline
-            }
-            // The grid is one continuous timeline, newest first; the year and month shortcuts jump in it.
-            val visiblePhotos = PhotoFiles.photosInTimeline(
-                activePhotos,
-                activeTimeline,
-                year = null,
-                month = null,
-                newestFirst = newestFirst
-            )
+            val refreshed = source.refresh(cachedEntries)
+            if (cachedEntries.isNotEmpty() && !refreshed.changed) return@execute
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
-                loadingOverlay.visibility = View.GONE
-                allPhotos = foundPhotos
-                allTimeline = allPhotoTimeline
-                timeline = activeTimeline
-                favoritePaths = initialFavoritePaths
-                favoritesOnly = showFavoritesOnly
-                updateFavoritesFilterButton()
-                adapter.setPhotos(visiblePhotos)
-                startSlideshowButton.isEnabled = foundPhotos.isNotEmpty()
-                updateHeaderCount(if (showFavoritesOnly) activePhotos.size else foundPhotos.size)
-                status.visibility = if (foundPhotos.isEmpty()) View.VISIBLE else View.GONE
-                galleryFrame.visibility = if (foundPhotos.isEmpty()) View.INVISIBLE else View.VISIBLE
-                if (foundPhotos.isEmpty()) {
-                    status.setText(R.string.gallery_no_photos)
-                    rebuildDateShortcuts()
-                    settingsButton.requestFocus()
-                } else {
-                    jumpTo(0, null)
-                    grid.requestFocus()
-                }
+                applyLoadedEntries(refreshed.entries, keepPath = currentPhotoPath())
             }
+        }
+    }
+
+    private fun applyLoadedEntries(entries: List<IndexedPhoto>, keepPath: String?) {
+        val foundPhotos = entries.map { File(it.path) }
+        val allPhotoTimeline = PhotoIndex.buildTimeline(entries)
+        val initialFavoritePaths = preferences.favoritePaths()
+        val favoritesAvailable = foundPhotos.any { it.absolutePath in initialFavoritePaths }
+        val showFavoritesOnly = (
+            preferences.raw.getBoolean(
+                SettingsActivity.PLAY_FAVORITES_ONLY,
+                favoritesAvailable
+            ) && favoritesAvailable
+        )
+        if ((preferences.hasSavedFavoritesFilter &&
+                preferences.playFavoritesOnly != showFavoritesOnly
+            ) ||
+            (!preferences.hasSavedFavoritesFilter && showFavoritesOnly)
+        ) {
+            preferences.playFavoritesOnly = showFavoritesOnly
+        }
+        val activePhotos = if (showFavoritesOnly) {
+            PhotoFavorites.filter(foundPhotos, initialFavoritePaths)
+        } else {
+            foundPhotos
+        }
+        val activeTimeline = if (showFavoritesOnly) {
+            PhotoFiles.subsetTimeline(activePhotos, allPhotoTimeline)
+        } else {
+            allPhotoTimeline
+        }
+        // The grid is one continuous timeline, newest first; the year and month shortcuts jump in it.
+        val visiblePhotos = PhotoFiles.photosInTimeline(
+            activePhotos,
+            activeTimeline,
+            year = null,
+            month = null,
+            newestFirst = newestFirst
+        )
+        loadingOverlay.visibility = View.GONE
+        allPhotos = foundPhotos
+        allTimeline = allPhotoTimeline
+        timeline = activeTimeline
+        favoritePaths = initialFavoritePaths
+        favoritesOnly = showFavoritesOnly
+        updateFavoritesFilterButton()
+        adapter.setPhotos(visiblePhotos)
+        startSlideshowButton.isEnabled = foundPhotos.isNotEmpty()
+        updateHeaderCount(if (showFavoritesOnly) activePhotos.size else foundPhotos.size)
+        status.visibility = if (foundPhotos.isEmpty()) View.VISIBLE else View.GONE
+        galleryFrame.visibility = if (foundPhotos.isEmpty()) View.INVISIBLE else View.VISIBLE
+        if (foundPhotos.isEmpty()) {
+            status.setText(R.string.gallery_no_photos)
+            rebuildDateShortcuts()
+            settingsButton.requestFocus()
+        } else {
+            val targetIndex = keepPath
+                ?.let { path -> visiblePhotos.indexOfFirst { it.absolutePath == path } }
+                ?.takeIf { it >= 0 }
+                ?: 0
+            jumpTo(targetIndex, null)
+            grid.requestFocus()
         }
     }
 

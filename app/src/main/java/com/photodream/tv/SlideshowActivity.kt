@@ -37,6 +37,7 @@ class SlideshowActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var worker: ThreadPoolExecutor? = null
     private var photoLoadTask: Future<*>? = null
+    private var prefetchTask: Future<*>? = null
     private var scheduledNext: Runnable? = null
     private var isRunning = false
     private var isPaused = false
@@ -46,12 +47,18 @@ class SlideshowActivity : Activity() {
     private var displayedPhotoIndex = -1
     private var initialPhotoPath: String? = null
     private var displayGeneration = 0
+    private var consecutiveFailures = 0
+    private var prefetched: PrefetchedFrame? = null
+    private lateinit var preferences: PhotoPreferences
+    private lateinit var repository: PhotoRepository
     private lateinit var stage: SlideshowStage
     private lateinit var pauseIndicator: ImageView
     private lateinit var locationLoader: PhotoLocationLoader
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        preferences = PhotoPreferences(this)
+        repository = PhotoRepository(this)
         initialPhotoPath = intent.getStringExtra(START_PHOTO_PATH)
         window.requestFeature(Window.FEATURE_NO_TITLE)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -146,47 +153,32 @@ class SlideshowActivity : Activity() {
     private fun startSlideshow() {
         if (isRunning) return
         isRunning = true
+        consecutiveFailures = 0
         worker = ThreadPoolExecutor(
             1,
             1,
             0L,
             TimeUnit.MILLISECONDS,
-            ArrayBlockingQueue(1),
-            ThreadFactory { runnable -> Thread(runnable, "photo-slideshow").apply { isDaemon = true } }
+            ArrayBlockingQueue(4),
+            ThreadFactory { runnable -> Thread(runnable, "photo-slideshow").apply { isDaemon = true } },
+            ThreadPoolExecutor.DiscardOldestPolicy()
         )
 
         if (!hasPhotoPermission()) {
             stage.status.setText(R.string.permission_required)
+            stage.status.visibility = View.VISIBLE
             return
         }
-        val folder = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-            .getString(SettingsActivity.PHOTO_FOLDER, null)
-            ?.let(::File)
-        if (folder == null) {
+        val folderPath = preferences.photoFolder
+        if (folderPath == null) {
             stage.status.setText(R.string.choose_photo_folder)
+            stage.status.visibility = View.VISIBLE
             return
         }
 
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val sortOrder = if (
-            preferences.getString(SettingsActivity.PHOTO_ORDER, SettingsActivity.ORDER_DATE_TIME) ==
-            SettingsActivity.ORDER_RANDOM
-        ) {
-            PhotoSortOrder.RANDOM
-        } else {
-            PhotoSortOrder.DATE_TIME
-        }
+        val favoritesOnly = preferences.playFavoritesOnly
         worker?.execute {
-            val found = PhotoFiles.listImages(folder)
-            val favoritesOnly = preferences.getBoolean(SettingsActivity.PLAY_FAVORITES_ONLY, false)
-            val favorites = PhotoFavorites.load(preferences)
-            val candidates = if (favoritesOnly) PhotoFavorites.filter(found, favorites) else found
-            val ordered = PhotoFiles.sortImages(
-                candidates,
-                sortOrder,
-                newestFirst = true,
-                captureTime = PhotoMetadata::captureTimeMillis
-            )
+            val ordered = repository.loadPlaybackPhotos(folderPath, preferences)
             mainHandler.post {
                 if (!isRunning) return@post
                 photos = ordered
@@ -194,6 +186,7 @@ class SlideshowActivity : Activity() {
                     stage.status.setText(
                         if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
                     )
+                    stage.status.visibility = View.VISIBLE
                 } else {
                     val startingIndex = ordered.indexOfFirst {
                         it.absolutePath == initialPhotoPath
@@ -231,6 +224,7 @@ class SlideshowActivity : Activity() {
 
     private fun movePhoto(direction: Int) {
         if (!isRunning || photos.isEmpty()) return
+        consecutiveFailures = 0
         val baseIndex = currentPhotoIndex.takeIf { it in photos.indices } ?: nextPhoto
         showPhotoAt(PhotoFiles.wrapIndex(baseIndex, direction, photos.size))
     }
@@ -240,9 +234,17 @@ class SlideshowActivity : Activity() {
         val currentWorker = worker ?: return
         cancelScheduledNext()
         cancelPhotoLoad()
+        cancelPrefetch()
         val generation = ++displayGeneration
         currentPhotoIndex = index
         nextPhoto = (index + 1) % photos.size
+
+        val cached = takePrefetched(index)
+        if (cached != null) {
+            onFrameReady(cached)
+            return
+        }
+
         val photo = photos[index]
         photoLoadTask = currentWorker.submit {
             val frame = decode(photo)
@@ -252,28 +254,72 @@ class SlideshowActivity : Activity() {
                     return@post
                 }
                 if (frame == null) {
-                    stage.status.setText(R.string.photo_unavailable)
-                    stage.status.visibility = View.VISIBLE
-                    scheduleNext()
+                    onDecodeFailure()
                     return@post
                 }
-                present(frame)
-                scheduleNext()
+                onFrameReady(frame)
             }
         }
     }
 
-    private fun present(frame: PhotoFrame) {
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        val transition = preferences.getString(SettingsActivity.TRANSITION, SettingsActivity.FADE)
-        val distance = window.decorView.width.toFloat().takeIf { it > 0f } ?: 1920f
-        stage.present(frame.bitmap, frame.photoName, transition, distance)
+    private fun onFrameReady(frame: PhotoFrame) {
+        consecutiveFailures = 0
+        present(frame)
+        scheduleNext(preferences.speed.intervalSeconds * 1000L)
+        prefetchNext()
+    }
 
-        val showDate = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
-        val showLocation = preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
-        stage.dateLabel.text = if (showDate) frame.date else ""
+    private fun onDecodeFailure() {
+        consecutiveFailures++
+        stage.status.setText(R.string.photo_unavailable)
+        stage.status.visibility = View.VISIBLE
+        if (!SlideshowStage.shouldStopAfterFailure(consecutiveFailures, photos.size)) {
+            scheduleNext(SlideshowStage.FAILURE_SKIP_DELAY_MS)
+        }
+    }
+
+    private fun prefetchNext() {
+        val currentWorker = worker ?: return
+        if (!isRunning || isPaused || photos.size < 2) return
+        val targetIndex = nextPhoto
+        if (prefetched?.index == targetIndex) return
+        clearPrefetched()
+        cancelPrefetch()
+        val generation = displayGeneration
+        val photo = photos[targetIndex]
+        prefetchTask = currentWorker.submit {
+            val frame = decode(photo) ?: return@submit
+            mainHandler.post {
+                if (!isRunning || generation != displayGeneration || nextPhoto != targetIndex) {
+                    frame.bitmap.recycle()
+                    return@post
+                }
+                clearPrefetched()
+                prefetched = PrefetchedFrame(targetIndex, frame)
+            }
+        }
+    }
+
+    private fun takePrefetched(index: Int): PhotoFrame? {
+        val ready = prefetched ?: return null
+        prefetched = null
+        if (ready.index == index) return ready.frame
+        ready.frame.bitmap.recycle()
+        return null
+    }
+
+    private fun clearPrefetched() {
+        prefetched?.frame?.bitmap?.recycle()
+        prefetched = null
+    }
+
+    private fun present(frame: PhotoFrame) {
+        val distance = window.decorView.width.toFloat().takeIf { it > 0f } ?: 1920f
+        stage.present(frame.bitmap, frame.photoName, preferences.transition, distance)
+
+        stage.dateLabel.text = if (preferences.showPhotoDate) frame.date else ""
         stage.locationLabel.text = ""
-        if (showLocation) {
+        if (preferences.showPhotoLocation) {
             locationLoader.load(frame.file) { stage.locationLabel.text = it.orEmpty() }
         } else {
             locationLoader.cancel()
@@ -281,18 +327,15 @@ class SlideshowActivity : Activity() {
         displayedPhotoIndex = currentPhotoIndex
     }
 
-    private fun scheduleNext() {
+    private fun scheduleNext(delayMs: Long) {
         if (!isRunning || isPaused) return
-        val seconds = SlideshowSpeed.normalize(
-            getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-        ).intervalSeconds
         cancelScheduledNext()
         val callback = Runnable {
             scheduledNext = null
             showNextPhoto()
         }
         scheduledNext = callback
-        mainHandler.postDelayed(callback, seconds * 1000L)
+        mainHandler.postDelayed(callback, delayMs)
     }
 
     private fun cancelScheduledNext() {
@@ -307,12 +350,22 @@ class SlideshowActivity : Activity() {
         photoLoadTask = null
     }
 
+    private fun cancelPrefetch() {
+        val task = prefetchTask ?: return
+        task.cancel(true)
+        if (task is Runnable) worker?.remove(task)
+        prefetchTask = null
+    }
+
     private fun stopSlideshow(preserveCurrentPhoto: Boolean = false) {
         isRunning = false
+        consecutiveFailures = 0
         displayGeneration++
         mainHandler.removeCallbacksAndMessages(null)
         scheduledNext = null
         cancelPhotoLoad()
+        cancelPrefetch()
+        clearPrefetched()
         locationLoader.shutdown()
         worker?.shutdownNow()
         worker = null
@@ -339,6 +392,7 @@ class SlideshowActivity : Activity() {
             cancelScheduledNext()
             val requestedIndex = currentPhotoIndex.takeIf { it in photos.indices }
             cancelPhotoLoad()
+            cancelPrefetch()
             displayGeneration++
             if (displayedPhotoIndex in photos.indices) {
                 currentPhotoIndex = displayedPhotoIndex
@@ -351,7 +405,8 @@ class SlideshowActivity : Activity() {
             if (displayedPhotoIndex in photos.indices) {
                 currentPhotoIndex = displayedPhotoIndex
                 nextPhoto = (displayedPhotoIndex + 1) % photos.size
-                scheduleNext()
+                scheduleNext(preferences.speed.intervalSeconds * 1000L)
+                prefetchNext()
             } else {
                 showPhotoAt(nextPhoto.takeIf { it in photos.indices } ?: 0)
             }
@@ -394,6 +449,8 @@ class SlideshowActivity : Activity() {
         val file: File,
         val photoName: String
     )
+
+    private data class PrefetchedFrame(val index: Int, val frame: PhotoFrame)
 
     companion object {
         const val START_PHOTO_PATH = "start_photo_path"

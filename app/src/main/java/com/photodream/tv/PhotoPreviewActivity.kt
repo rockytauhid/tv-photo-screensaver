@@ -335,7 +335,8 @@ class PhotoPreviewActivity : Activity() {
 
     private fun loadPhotoAndIndex() {
         indexWorker = Executors.newSingleThreadExecutor()
-        val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val preferences = PhotoPreferences(this)
+        val repository = PhotoRepository(this)
         indexWorker?.execute {
             val initialPhoto = photo
             val bitmap = PhotoImageDecoder.decodeForDisplay(this, initialPhoto)
@@ -349,10 +350,16 @@ class PhotoPreviewActivity : Activity() {
             }
 
             val folderPath = intent.getStringExtra(PHOTO_FOLDER)
-            val allPhotos = folderPath?.let { PhotoFiles.listImages(File(it)) }.orEmpty()
-            val timeline = PhotoFiles.buildTimeline(allPhotos, PhotoMetadata::captureTimeMillis)
+            val entries = if (folderPath != null) {
+                val source = repository.localSource(folderPath)
+                source.loadCached().ifEmpty { source.refresh(emptyList()).entries }
+            } else {
+                emptyList()
+            }
+            val allPhotos = entries.map { File(it.path) }
+            val timeline = PhotoIndex.buildTimeline(entries)
             val navigationPhotos = if (favoritesOnly) {
-                PhotoFavorites.filter(allPhotos, PhotoFavorites.load(preferences))
+                PhotoFavorites.filter(allPhotos, preferences.favoritePaths())
             } else {
                 allPhotos
             }
