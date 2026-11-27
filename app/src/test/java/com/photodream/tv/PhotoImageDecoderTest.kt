@@ -81,4 +81,45 @@ class PhotoImageDecoderTest {
             PhotoImageDecoder.orientationTransform(ExifInterface.ORIENTATION_TRANSVERSE)
         )
     }
+
+    @Test
+    fun rotateThenFlipMatchesExifSpecForTransposeAndTransverse() {
+        // Test point (x=2, y=5) in top-left image coordinates (+x right, +y down).
+        // Orientation 5 (TRANSPOSE): swap axes -> (y, x) = (5, 2).
+        assertEquals(
+            5 to 2,
+            PhotoImageDecoder.applyOrientationPoint(
+                2,
+                5,
+                PhotoImageDecoder.orientationTransform(ExifInterface.ORIENTATION_TRANSPOSE)
+            )
+        )
+        // Orientation 7 (TRANSVERSE): swap axes and negate both -> (-y, -x) = (-5, -2).
+        assertEquals(
+            -5 to -2,
+            PhotoImageDecoder.applyOrientationPoint(
+                2,
+                5,
+                PhotoImageDecoder.orientationTransform(ExifInterface.ORIENTATION_TRANSVERSE)
+            )
+        )
+        // Orientation 6 (ROTATE_90 CW): (x, y) -> (-y, x) = (-5, 2).
+        assertEquals(
+            -5 to 2,
+            PhotoImageDecoder.applyOrientationPoint(
+                2,
+                5,
+                PhotoImageDecoder.orientationTransform(ExifInterface.ORIENTATION_ROTATE_90)
+            )
+        )
+        // Orientation 8 (ROTATE_270 CW): (x, y) -> (y, -x) = (5, -2).
+        assertEquals(
+            5 to -2,
+            PhotoImageDecoder.applyOrientationPoint(
+                2,
+                5,
+                PhotoImageDecoder.orientationTransform(ExifInterface.ORIENTATION_ROTATE_270)
+            )
+        )
+    }
 }

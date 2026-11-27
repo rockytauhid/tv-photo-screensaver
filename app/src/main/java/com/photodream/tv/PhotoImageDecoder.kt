@@ -134,9 +134,9 @@ internal object PhotoImageDecoder {
 
         val transform = orientationTransform(orientation) ?: return bitmap
         val matrix = Matrix().apply {
+            if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
             if (transform.flipHorizontal) postScale(-1f, 1f)
             if (transform.flipVertical) postScale(1f, -1f)
-            if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
         }
         val transformed = try {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -174,6 +174,41 @@ internal object PhotoImageDecoder {
         ExifInterface.ORIENTATION_TRANSVERSE ->
             OrientationTransform(rotationDegrees = 270f, flipHorizontal = true)
         else -> null
+    }
+
+    /**
+     * Pure point transform matching the matrix order applied in [decode] (rotate clockwise, then
+     * flip). Used by JVM unit tests to verify all 8 EXIF orientations.
+     */
+    internal fun applyOrientationPoint(
+        x: Int,
+        y: Int,
+        transform: OrientationTransform?
+    ): Pair<Int, Int> {
+        if (transform == null) return x to y
+        var rx = x
+        var ry = y
+        when (transform.rotationDegrees) {
+            90f -> {
+                val nx = -ry
+                val ny = rx
+                rx = nx
+                ry = ny
+            }
+            180f -> {
+                rx = -rx
+                ry = -ry
+            }
+            270f -> {
+                val nx = ry
+                val ny = -rx
+                rx = nx
+                ry = ny
+            }
+        }
+        if (transform.flipHorizontal) rx = -rx
+        if (transform.flipVertical) ry = -ry
+        return rx to ry
     }
 
     /**
