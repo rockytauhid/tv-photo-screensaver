@@ -74,13 +74,14 @@ class FolderPickerActivity : Activity() {
         titleBlock.addView(TextView(this).apply {
             text = getString(R.string.folder_picker_title)
             textSize = 26f
-            setTypeface(null, Typeface.BOLD)
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         })
         pathLabel = TextView(this).apply {
             textSize = 15f
+            typeface = TvDesignTokens.fontLight
             setTextColor(SECONDARY_TEXT_COLOR)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.START
@@ -89,6 +90,7 @@ class FolderPickerActivity : Activity() {
         titleBlock.addView(pathLabel)
         summaryLabel = TextView(this).apply {
             textSize = 13f
+            typeface = TvDesignTokens.fontLight
             setTextColor(MUTED_TEXT_COLOR)
             maxLines = 1
             setPadding(0, dp(2), 0, 0)
@@ -102,7 +104,9 @@ class FolderPickerActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        upButton = createActionButton(getString(R.string.go_up)) { navigateUp() }
+        upButton = createActionButton(getString(R.string.go_up)) { navigateUp() }.apply {
+            id = View.generateViewId()
+        }
         actions.addView(upButton, LinearLayout.LayoutParams(-2, dp(44)).apply {
             rightMargin = dp(12)
         })
@@ -112,6 +116,8 @@ class FolderPickerActivity : Activity() {
                 Intent().putExtra(SELECTED_FOLDER, currentFolder.absolutePath)
             )
             finish()
+        }.apply {
+            id = View.generateViewId()
         }
         actions.addView(useFolderButton, LinearLayout.LayoutParams(-2, dp(44)))
         header.addView(actions, LinearLayout.LayoutParams(-2, -2))
@@ -127,11 +133,14 @@ class FolderPickerActivity : Activity() {
 
         folders = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(2), dp(4), dp(2), dp(8))
+            setPadding(dp(2), dp(4), dp(2), dp(28))
+            clipChildren = false
+            clipToPadding = false
         }
         scroll = ScrollView(this).apply {
             isFocusable = false
             isVerticalScrollBarEnabled = true
+            clipToPadding = false
             addView(folders, LinearLayout.LayoutParams(-1, -2))
         }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -207,7 +216,10 @@ class FolderPickerActivity : Activity() {
             val row = createFolderRow(entry.label, isCurrent) {
                 showFolder(entry.directory)
             }
-            if (firstRow == null) firstRow = row
+            if (firstRow == null) {
+                row.id = View.generateViewId()
+                firstRow = row
+            }
             if (focusPath != null && entry.directory.absolutePath == focusPath) {
                 focusTarget = row
             }
@@ -215,6 +227,16 @@ class FolderPickerActivity : Activity() {
                 row,
                 LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
             )
+        }
+
+        val topRow = firstRow
+        if (topRow != null) {
+            upButton.nextFocusDownId = topRow.id
+            useFolderButton.nextFocusDownId = topRow.id
+            topRow.nextFocusUpId = if (useFolderButton.isEnabled) useFolderButton.id else View.NO_ID
+        } else {
+            upButton.nextFocusDownId = View.NO_ID
+            useFolderButton.nextFocusDownId = View.NO_ID
         }
 
         if (entries.isEmpty()) {
@@ -230,6 +252,23 @@ class FolderPickerActivity : Activity() {
         scroll.post {
             if (focusTarget == null) scroll.scrollTo(0, 0)
             target.requestFocus()
+            if (target !== upButton && target !== useFolderButton) {
+                scrollRowIntoView(target)
+            }
+        }
+    }
+
+    private fun scrollRowIntoView(row: View) {
+        val margin = dp(24)
+        val viewportHeight = scroll.height
+        if (viewportHeight <= 0) return
+        val top = row.top
+        val bottom = row.bottom
+        val scrollY = scroll.scrollY
+        when {
+            top - margin < scrollY -> scroll.smoothScrollTo(0, (top - margin).coerceAtLeast(0))
+            bottom + margin > scrollY + viewportHeight ->
+                scroll.smoothScrollTo(0, bottom + margin - viewportHeight)
         }
     }
 
@@ -260,7 +299,7 @@ class FolderPickerActivity : Activity() {
                 else -> ROW_TEXT_COLOR
             }
         )
-        button.setTypeface(null, if (hasFocus && enabled) Typeface.BOLD else Typeface.NORMAL)
+        button.typeface = if (hasFocus && enabled) TvDesignTokens.fontRegular else TvDesignTokens.fontLight
         button.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(100).toFloat()
@@ -272,7 +311,7 @@ class FolderPickerActivity : Activity() {
                 }
             )
             if (hasFocus && enabled) {
-                setStroke(dp(2), Color.WHITE)
+                setStroke(focusStrokePx(), Color.WHITE)
             } else {
                 setStroke(dp(1), if (enabled) SUBTLE_BORDER_COLOR else Color.TRANSPARENT)
             }
@@ -337,7 +376,7 @@ class FolderPickerActivity : Activity() {
                 cornerRadius = dp(10).toFloat()
                 setColor(if (focused) FOCUSED_FILL_COLOR else ROW_FILL_COLOR)
                 if (focused) {
-                    setStroke(dp(2), Color.WHITE)
+                    setStroke(focusStrokePx(), Color.WHITE)
                 } else {
                     setStroke(dp(1), SUBTLE_BORDER_COLOR)
                 }
@@ -350,12 +389,15 @@ class FolderPickerActivity : Activity() {
                 }
             )
             nameView.setTextColor(if (focused) Color.WHITE else ROW_TEXT_COLOR)
-            nameView.setTypeface(null, if (focused) Typeface.BOLD else Typeface.NORMAL)
+            nameView.typeface = if (focused) TvDesignTokens.fontRegular else TvDesignTokens.fontLight
             chevron.setTextColor(if (focused) Color.WHITE else MUTED_TEXT_COLOR)
         }
 
         applyRowStyle(focused = false)
-        row.setOnFocusChangeListener { _, hasFocus -> applyRowStyle(hasFocus) }
+        row.setOnFocusChangeListener { _, hasFocus ->
+            applyRowStyle(hasFocus)
+            if (hasFocus) scrollRowIntoView(row)
+        }
         return row
     }
 

@@ -251,6 +251,7 @@ class PhotoPreviewActivity : Activity() {
         val horizontalEdge = dp(TV_HORIZONTAL_MARGIN_DP)
         photoCountLabel = TextView(this).apply {
             textSize = 16f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
@@ -271,6 +272,7 @@ class PhotoPreviewActivity : Activity() {
 
         dateLabel = TextView(this).apply {
             textSize = 15f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
@@ -279,6 +281,7 @@ class PhotoPreviewActivity : Activity() {
         }
         locationLabel = TextView(this).apply {
             textSize = 15f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             setShadowLayer(5f, 1f, 1f, Color.BLACK)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT

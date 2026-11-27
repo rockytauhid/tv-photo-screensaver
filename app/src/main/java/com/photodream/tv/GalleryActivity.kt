@@ -245,6 +245,7 @@ class GalleryActivity : Activity() {
         headerTitle = TextView(this).apply {
             text = getString(R.string.app_name)
             textSize = 18f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -304,7 +305,7 @@ class GalleryActivity : Activity() {
         root.addView(
             shortcutsScroll,
             FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply {
-                topMargin = headerTop + dp(42)
+                topMargin = headerTop + dp(38)
             }
         )
 
@@ -349,17 +350,9 @@ class GalleryActivity : Activity() {
                 topMargin = dp(GRID_VERTICAL_PADDING_DP)
             }
         )
-        val galleryContainer = FrameLayout(this).apply {
-            clipChildren = false
-            clipToPadding = false
-            addView(galleryFrame, FrameLayout.LayoutParams(-1, dp(gridHeightDp), Gravity.CENTER))
-        }
         root.addView(
-            galleryContainer,
-            FrameLayout.LayoutParams(-1, -1).apply {
-                topMargin = headerTop + dp(78)
-                bottomMargin = verticalEdge + dp(24)
-            }
+            galleryFrame,
+            FrameLayout.LayoutParams(-1, dp(gridHeightDp), Gravity.CENTER)
         )
 
         loadingOverlay = LinearLayout(this).apply {
@@ -379,7 +372,7 @@ class GalleryActivity : Activity() {
                 TextView(this@GalleryActivity).apply {
                     text = getString(R.string.app_name)
                     textSize = 24f
-                    setTypeface(null, Typeface.BOLD)
+                    typeface = TvDesignTokens.fontLight
                     setTextColor(Color.WHITE)
                     setPadding(0, dp(14), 0, dp(20))
                 },
@@ -411,6 +404,7 @@ class GalleryActivity : Activity() {
         // Only the date is shown here (bottom left); aligned with the title, Year, and bottom safe margin.
         selectedDateLabel = TextView(this).apply {
             textSize = 15f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
@@ -598,14 +592,56 @@ class GalleryActivity : Activity() {
             ThreadFactory { runnable -> Thread(runnable, "photo-index").apply { isDaemon = true } }
         )
         scanExecutor?.execute {
-            val refreshed = PhotoRepository.safeRefresh(source, cachedRefs)
-            if (cachedRefs.isNotEmpty() && !refreshed.changed) return@execute
+            if (cachedRefs.isNotEmpty()) {
+                val refreshed = PhotoRepository.safeRefresh(source, cachedRefs)
+                if (!refreshed.changed) return@execute
+                mainHandler.post {
+                    if (isFinishing || isDestroyed || generation != scanGeneration) return@post
+                    applyLoadedRefs(
+                        refreshed.items,
+                        keepPath = currentPhotoPath(),
+                        requestGridFocus = false
+                    )
+                }
+                return@execute
+            }
+
+            // Fresh folder: list files quickly without EXIF, pre-warm the first page of thumbnails
+            // within the 3-second loading screen budget, then read full EXIF dates in the background.
+            val deadlineMillis = System.currentTimeMillis() + MAX_LOADING_SCREEN_MS
+            val fastFiles = PhotoFiles.listImages(File(folderPath))
+            val fastRefs = fastFiles.map { file ->
+                val modified = file.lastModified()
+                PhotoRef(
+                    id = file.absolutePath,
+                    sourceId = source.id,
+                    displayName = file.name,
+                    captureTimeMillis = modified,
+                    lastModified = modified,
+                    size = file.length()
+                )
+            }
+            val fastOrdered = fastRefs.sortedByDescending { it.captureTimeMillis }
+            val warmCount = minOf(INITIAL_WARM_THUMBNAIL_COUNT, fastOrdered.size)
+            for (i in 0 until warmCount) {
+                if (generation != scanGeneration || System.currentTimeMillis() >= deadlineMillis) {
+                    break
+                }
+                adapter.warmThumbnail(File(fastOrdered[i].id))
+            }
+            mainHandler.post {
+                if (isFinishing || isDestroyed || generation != scanGeneration) return@post
+                applyLoadedRefs(fastRefs, keepPath = null, requestGridFocus = true)
+            }
+            if (fastFiles.isEmpty() || generation != scanGeneration) return@execute
+
+            val refreshed = PhotoRepository.safeRefresh(source, emptyList())
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
                 applyLoadedRefs(
                     refreshed.items,
                     keepPath = currentPhotoPath(),
-                    requestGridFocus = cachedRefs.isEmpty()
+                    requestGridFocus = false
                 )
             }
         }
@@ -936,10 +972,11 @@ class GalleryActivity : Activity() {
                 else -> 0xFFE0E0E0.toInt()
             }
         )
-        view.setTypeface(
-            null,
-            if (selected || view.hasFocus()) Typeface.BOLD else Typeface.NORMAL
-        )
+        view.typeface = if (selected || view.hasFocus()) {
+            TvDesignTokens.fontRegular
+        } else {
+            TvDesignTokens.fontLight
+        }
         view.background = if (view.hasFocus()) focusRing(circle = false) else null
     }
 
@@ -1257,7 +1294,7 @@ class GalleryActivity : Activity() {
             val focusBorder = View(this@GalleryActivity).apply {
                 background = GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
-                    setStroke(dp(2), Color.WHITE)
+                    setStroke(focusStrokePx(), Color.WHITE)
                 }
                 visibility = View.GONE
                 isFocusable = false
@@ -1285,6 +1322,22 @@ class GalleryActivity : Activity() {
             }
             holder.task = null
             holder.taskKey = null
+        }
+
+        fun warmThumbnail(file: File) {
+            if (closed) return
+            val key = file.absolutePath
+            if (thumbnailCache.get(key) != null || hasFailedThumbnail(key)) return
+            val bitmap = decodeThumbnail(file)
+            if (closed) {
+                bitmap?.recycle()
+                return
+            }
+            if (bitmap != null) {
+                thumbnailCache.put(key, bitmap)
+            } else {
+                rememberThumbnailFailure(key)
+            }
         }
 
         private fun decodeThumbnail(file: File): Bitmap? {
@@ -1406,6 +1459,8 @@ class GalleryActivity : Activity() {
         private const val REQUEST_PREVIEW = 2
         private const val REQUEST_SETTINGS = 3
         private const val MAX_FAILED_THUMBNAILS = 128
+        private const val MAX_LOADING_SCREEN_MS = 3000L
+        private const val INITIAL_WARM_THUMBNAIL_COUNT = 24
         private const val OPENED_INITIAL_SETTINGS = "opened_initial_settings"
         private const val GRID_SPACING_DP = 10
         private const val GRID_VERTICAL_PADDING_DP = 14

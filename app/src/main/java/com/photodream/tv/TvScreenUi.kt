@@ -57,6 +57,10 @@ internal object TvDesignTokens {
     val textSecondary = 0xFFBBBBBB.toInt()
     val textMuted = 0xFF9E9E9E.toInt()
     val textDisabled = 0xFF666666.toInt()
+
+    val fontLight: Typeface by lazy { Typeface.create("sans-serif-light", Typeface.NORMAL) }
+    val fontRegular: Typeface by lazy { Typeface.create("sans-serif", Typeface.NORMAL) }
+    val fontClock: Typeface by lazy { Typeface.create("sans-serif-thin", Typeface.NORMAL) }
 }
 
 /** Semi-transparent panel that slides in from the right over a dimmed screen. */
@@ -160,6 +164,7 @@ internal fun Context.createOptionText(
         )
         setPadding(ctx.dp(16), ctx.dp(8), ctx.dp(16), ctx.dp(8))
         minHeight = ctx.dp(minHeightDp)
+        typeface = TvDesignTokens.fontLight
         isFocusable = true
         isFocusableInTouchMode = true
         isClickable = true
@@ -167,7 +172,8 @@ internal fun Context.createOptionText(
         setOnClickListener { onClick() }
         setOnFocusChangeListener { v, hasFocus ->
             v.background = if (hasFocus) ctx.focusRing(circle = false) else null
-            (v as TextView).setTypeface(null, if (hasFocus) Typeface.BOLD else Typeface.NORMAL)
+            (v as TextView).typeface =
+                if (hasFocus) TvDesignTokens.fontRegular else TvDesignTokens.fontLight
         }
     }
 }
@@ -221,7 +227,7 @@ private fun styleCardOption(
             else -> TvDesignTokens.textPrimary
         }
     )
-    button.setTypeface(null, if (hasFocus && enabled) Typeface.BOLD else Typeface.NORMAL)
+    button.typeface = if (hasFocus && enabled) TvDesignTokens.fontRegular else TvDesignTokens.fontLight
     button.background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = context.dp(if (pill) 100 else 10).toFloat()
@@ -233,7 +239,7 @@ private fun styleCardOption(
             }
         )
         when {
-            hasFocus && enabled -> setStroke(context.dp(2), Color.WHITE)
+            hasFocus && enabled -> setStroke(context.focusStrokePx(), Color.WHITE)
             enabled -> setStroke(context.dp(1), TvDesignTokens.borderSubtle)
             else -> setStroke(0, Color.TRANSPARENT)
         }
@@ -287,13 +293,15 @@ internal fun ImageButton.setIconActive(active: Boolean) {
     imageTintList = ColorStateList.valueOf(if (active) GOLD_COLOR else Color.WHITE)
 }
 
+internal fun Context.focusStrokePx(): Int = dp(1).coerceAtLeast(1)
+
 internal fun Context.focusRing(circle: Boolean): GradientDrawable =
     GradientDrawable().apply {
         shape = if (circle) GradientDrawable.OVAL else GradientDrawable.RECTANGLE
         // Larger than half the height: the drawable clamps it, which gives a pill shape.
         if (!circle) cornerRadius = dp(100).toFloat()
         setColor(Color.TRANSPARENT)
-        setStroke(dp(2), Color.WHITE)
+        setStroke(focusStrokePx(), Color.WHITE)
     }
 
 internal fun Activity.openScreensaverSettings() {
@@ -442,6 +450,7 @@ internal class SlideshowStage(context: Context, handler: Handler) {
         TextView(context).apply {
             setTextColor(Color.WHITE)
             textSize = 18f
+            typeface = TvDesignTokens.fontLight
             setShadowLayer(5f, 1f, 1f, Color.BLACK)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END

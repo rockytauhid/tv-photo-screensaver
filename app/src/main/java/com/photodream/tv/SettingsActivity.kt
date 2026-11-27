@@ -105,7 +105,7 @@ class SettingsActivity : Activity() {
                 if (previewOnly) R.string.preview_settings_title else R.string.settings_title
             )
             textSize = 26f
-            setTypeface(null, Typeface.BOLD)
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
@@ -220,7 +220,7 @@ class SettingsActivity : Activity() {
                 text = title.uppercase(Locale.getDefault())
                 textSize = 12f
                 letterSpacing = 0.08f
-                setTypeface(null, Typeface.BOLD)
+                typeface = TvDesignTokens.fontRegular
                 setTextColor(TvDesignTokens.textMuted)
                 setPadding(dp(4), 0, dp(4), dp(4))
             },
@@ -234,6 +234,7 @@ class SettingsActivity : Activity() {
     private fun addHelperText(parent: LinearLayout): TextView =
         TextView(this).also {
             it.textSize = 13f
+            it.typeface = TvDesignTokens.fontLight
             it.setTextColor(TvDesignTokens.textSecondary)
             it.setPadding(dp(4), dp(2), dp(4), dp(8))
             parent.addView(it, LinearLayout.LayoutParams(-1, -2))

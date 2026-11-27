@@ -25,12 +25,14 @@ internal class PhotoClock(
     private val date = TextView(context).apply {
         setTextColor(Color.WHITE)
         textSize = 16f
+        typeface = TvDesignTokens.fontLight
         setShadowLayer(5f, 1f, 1f, Color.BLACK)
         gravity = alignment
     }
     private val time = TextView(context).apply {
         setTextColor(Color.WHITE)
         textSize = 38f
+        typeface = TvDesignTokens.fontClock
         setShadowLayer(5f, 1f, 1f, Color.BLACK)
         gravity = alignment
     }
