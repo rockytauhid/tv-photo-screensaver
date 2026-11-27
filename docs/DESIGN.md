@@ -51,9 +51,9 @@ interface PhotoSource {
 ```
 
 - The slideshow works on `PhotoRef` (source id, path or id, size, modified time) and never knows the protocol.
-- **Index first, then play.** List a source once, save the index as JSON in app-private storage, refresh when the
-  dream starts and the index is older than a set time (6 to 24 hours). Start showing from the saved index at once;
-  never wait on a network listing before the first picture.
+- **Index first, then play.** List a source once, save the index in app-private storage (`photo_index.tsv`), refresh
+  quietly in the background when the dream or slideshow starts. Start showing from the saved index at once; never wait
+  on a network listing before the first picture.
 - **Prefetch one image ahead** on a single background thread. A slow NAS must not freeze the transition.
 - **Failure is normal.** A source that is offline is skipped with a quiet log line; if all fail, fall back to a
   plain clock or the last cached photos, never a crash or an error dialog (nobody is holding a mouse).
@@ -198,7 +198,9 @@ Rules for cloud code:
   buffering full files in RAM, and `NetworkMonitor` provides an API-guarded connectivity check for future LAN/cloud
   sources.
 - `PhotoPreferences` wraps shared preferences in one typed class.
-- Both `PhotoDream` and `SlideshowActivity` prefetch one frame ahead on their single worker thread while releasing
+- Both `PhotoDream` and `SlideshowActivity` start from the cached index, run a single background reconciliation on
+  their worker thread (swapping in changes without interrupting the current photo), fall back to all photos for the
+  run if Favorites-only is enabled with no matching favorites in the folder, prefetch one frame ahead while releasing
   outgoing transition bitmaps on animation end (staying within the 3-frame bitmap budget), and cap consecutive decode
   failures so an unplugged drive or unreadable collection falls back cleanly to the status message and clock.
 - The slideshow accepts JPEG, PNG, WebP and GIF files (GIF is displayed as a still image). It decodes within the
@@ -254,8 +256,9 @@ Rules for cloud code:
   slideshow forwards the selected or last-displayed path to Gallery.
 - When a selected photo's previous or next thumbnail is outside the visible grid, a narrow cropped preview at that
   screen edge cues the adjacent image. These two previews use the same bounded background thumbnail loader/cache.
-- Thumbnails show a loading label while decoding and a "No preview" placeholder for unreadable images. The
-  full-screen preview shows the failed filename, and left/right navigation remains available.
+- Thumbnails show a clean dark tile while decoding and fade in smoothly once ready; unreadable images show a
+  "No preview" placeholder. The full-screen preview shows the failed filename, and left/right navigation remains
+  available.
 - Both the manual slideshow and system `DreamService` place the clock in the upper-right corner.
 - Pixel Motion Photos and other photos with embedded motion clips currently display only their still image;
   embedded video playback is not implemented.
