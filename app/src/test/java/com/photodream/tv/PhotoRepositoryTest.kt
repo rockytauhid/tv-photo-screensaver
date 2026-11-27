@@ -74,6 +74,42 @@ class PhotoRepositoryTest {
         assertNull(source.open(bad, 1920, 1080))
     }
 
+    @Test
+    fun nextIndexAfterRefreshPreservesNextPhotoOrContinuesAfterCurrent() {
+        val items = listOf(photo("a", 3000L), photo("b", 2000L), photo("c", 1000L))
+
+        // Keeps pointing at the same next photo when still present.
+        assertEquals(2, PhotoRepository.nextIndexAfterRefresh(items, currentId = "b", nextId = "c"))
+        // If the old next photo was deleted, continues right after the current photo.
+        assertEquals(2, PhotoRepository.nextIndexAfterRefresh(items, currentId = "b", nextId = "deleted"))
+        // Wraps to 0 when continuing after the last photo.
+        assertEquals(0, PhotoRepository.nextIndexAfterRefresh(items, currentId = "c", nextId = "deleted"))
+        // Starts at 0 when neither current nor next is in the refreshed list, or list is empty.
+        assertEquals(0, PhotoRepository.nextIndexAfterRefresh(items, currentId = "x", nextId = "y"))
+        assertEquals(0, PhotoRepository.nextIndexAfterRefresh(emptyList(), currentId = "a", nextId = "b"))
+    }
+
+    @Test
+    fun orderPlaybackRefsFallsBackToAllPhotosWhenNoFavoritesMatchFolder() {
+        val items = listOf(photo("old", 1000L), photo("new", 2000L))
+
+        val fallback = PhotoRepository.orderPlaybackRefs(
+            items,
+            PhotoSortOrder.DATE_TIME,
+            favoritesOnly = true,
+            favoritePaths = setOf("some-other-folder/fav.jpg")
+        )
+        assertEquals(listOf("new", "old"), fallback.map { it.id })
+
+        val matched = PhotoRepository.orderPlaybackRefs(
+            items,
+            PhotoSortOrder.DATE_TIME,
+            favoritesOnly = true,
+            favoritePaths = setOf("old")
+        )
+        assertEquals(listOf("old"), matched.map { it.id })
+    }
+
     private fun photo(id: String, time: Long): PhotoRef =
         PhotoRef(id = id, sourceId = "fake:lan", displayName = "$id.jpg", captureTimeMillis = time)
 }

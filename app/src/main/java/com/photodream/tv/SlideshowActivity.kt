@@ -41,7 +41,7 @@ class SlideshowActivity : Activity() {
     private var scheduledNext: Runnable? = null
     private var isRunning = false
     private var isPaused = false
-    private var photos: List<File> = emptyList()
+    private var photos: List<PhotoRef> = emptyList()
     private var nextPhoto = 0
     private var currentPhotoIndex = -1
     private var displayedPhotoIndex = -1
@@ -97,7 +97,7 @@ class SlideshowActivity : Activity() {
     override fun onPause() {
         stage.clock.stop()
         initialPhotoPath =
-            photos.getOrNull(displayedPhotoIndex)?.absolutePath ?: initialPhotoPath
+            photos.getOrNull(displayedPhotoIndex)?.id ?: initialPhotoPath
         stopSlideshow(preserveCurrentPhoto = true)
         super.onPause()
     }
@@ -176,21 +176,31 @@ class SlideshowActivity : Activity() {
             return
         }
 
+        val sortOrder = preferences.sortOrder
         val favoritesOnly = preferences.playFavoritesOnly
+        val favoritePaths = preferences.favoritePaths()
+        val source = repository.localSource(folderPath)
         worker?.execute {
-            val ordered = repository.loadPlaybackPhotos(folderPath, preferences)
+            val cached = source.loadCached()
+            val initialRefs = if (cached.isNotEmpty()) {
+                cached
+            } else {
+                PhotoRepository.safeRefresh(source, emptyList()).items
+            }
+            val ordered = PhotoRepository.orderPlaybackRefs(
+                initialRefs,
+                sortOrder,
+                favoritesOnly,
+                favoritePaths
+            )
             mainHandler.post {
                 if (!isRunning) return@post
                 photos = ordered
                 if (photos.isEmpty()) {
-                    stage.status.setText(
-                        if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
-                    )
+                    stage.status.setText(R.string.no_photos_found)
                     stage.status.visibility = View.VISIBLE
                 } else {
-                    val startingIndex = ordered.indexOfFirst {
-                        it.absolutePath == initialPhotoPath
-                    }
+                    val startingIndex = ordered.indexOfFirst { it.id == initialPhotoPath }
                     initialPhotoPath = null
                     nextPhoto = startingIndex.takeIf { it >= 0 } ?: 0
                     if (isPaused) {
@@ -202,6 +212,54 @@ class SlideshowActivity : Activity() {
                     } else {
                         showNextPhoto()
                     }
+                }
+                if (cached.isNotEmpty()) {
+                    refreshInBackground(source, cached, sortOrder, favoritesOnly, favoritePaths)
+                }
+            }
+        }
+    }
+
+    private fun refreshInBackground(
+        source: PhotoSource,
+        cached: List<PhotoRef>,
+        sortOrder: PhotoSortOrder,
+        favoritesOnly: Boolean,
+        favoritePaths: Set<String>
+    ) {
+        worker?.execute {
+            val refreshed = PhotoRepository.safeRefresh(source, cached)
+            if (!refreshed.changed) return@execute
+            val ordered = PhotoRepository.orderPlaybackRefs(
+                refreshed.items,
+                sortOrder,
+                favoritesOnly,
+                favoritePaths
+            )
+            mainHandler.post {
+                if (!isRunning) return@post
+                val currentId = photos.getOrNull(displayedPhotoIndex)?.id
+                    ?: photos.getOrNull(currentPhotoIndex)?.id
+                val oldNextId = photos.getOrNull(nextPhoto)?.id
+                photos = ordered
+                if (photos.isEmpty()) {
+                    clearPrefetched()
+                    currentPhotoIndex = -1
+                    displayedPhotoIndex = -1
+                    nextPhoto = 0
+                    stage.status.setText(R.string.no_photos_found)
+                    stage.status.visibility = View.VISIBLE
+                    return@post
+                }
+                val newCurrentIndex = currentId?.let { id -> photos.indexOfFirst { it.id == id } } ?: -1
+                if (newCurrentIndex >= 0) {
+                    displayedPhotoIndex = newCurrentIndex
+                    currentPhotoIndex = newCurrentIndex
+                }
+                nextPhoto = PhotoRepository.nextIndexAfterRefresh(photos, currentId, oldNextId)
+                val prefetchedId = prefetched?.refId
+                if (prefetchedId != null && photos.getOrNull(nextPhoto)?.id != prefetchedId) {
+                    clearPrefetched()
                 }
             }
         }
@@ -238,16 +296,16 @@ class SlideshowActivity : Activity() {
         val generation = ++displayGeneration
         currentPhotoIndex = index
         nextPhoto = (index + 1) % photos.size
+        val ref = photos[index]
 
-        val cached = takePrefetched(index)
+        val cached = takePrefetched(ref.id)
         if (cached != null) {
             onFrameReady(cached)
             return
         }
 
-        val photo = photos[index]
         photoLoadTask = currentWorker.submit {
-            val frame = decode(photo)
+            val frame = decode(ref)
             mainHandler.post {
                 if (!isRunning || generation != displayGeneration) {
                     frame?.bitmap?.recycle()
@@ -281,29 +339,31 @@ class SlideshowActivity : Activity() {
     private fun prefetchNext() {
         val currentWorker = worker ?: return
         if (!isRunning || isPaused || photos.size < 2) return
-        val targetIndex = nextPhoto
-        if (prefetched?.index == targetIndex) return
+        val targetRef = photos.getOrNull(nextPhoto) ?: return
+        if (prefetched?.refId == targetRef.id) return
         clearPrefetched()
         cancelPrefetch()
         val generation = displayGeneration
-        val photo = photos[targetIndex]
         prefetchTask = currentWorker.submit {
-            val frame = decode(photo) ?: return@submit
+            val frame = decode(targetRef) ?: return@submit
             mainHandler.post {
-                if (!isRunning || generation != displayGeneration || nextPhoto != targetIndex) {
+                if (!isRunning ||
+                    generation != displayGeneration ||
+                    photos.getOrNull(nextPhoto)?.id != targetRef.id
+                ) {
                     frame.bitmap.recycle()
                     return@post
                 }
                 clearPrefetched()
-                prefetched = PrefetchedFrame(targetIndex, frame)
+                prefetched = PrefetchedFrame(targetRef.id, frame)
             }
         }
     }
 
-    private fun takePrefetched(index: Int): PhotoFrame? {
+    private fun takePrefetched(refId: String): PhotoFrame? {
         val ready = prefetched ?: return null
         prefetched = null
-        if (ready.index == index) return ready.frame
+        if (ready.refId == refId) return ready.frame
         ready.frame.bitmap.recycle()
         return null
     }
@@ -315,12 +375,12 @@ class SlideshowActivity : Activity() {
 
     private fun present(frame: PhotoFrame) {
         val distance = window.decorView.width.toFloat().takeIf { it > 0f } ?: 1920f
-        stage.present(frame.bitmap, frame.photoName, preferences.transition, distance)
+        stage.present(frame.bitmap, frame.ref.displayName, preferences.transition, distance)
 
         stage.dateLabel.text = if (preferences.showPhotoDate) frame.date else ""
         stage.locationLabel.text = ""
         if (preferences.showPhotoLocation) {
-            locationLoader.load(frame.file) { stage.locationLabel.text = it.orEmpty() }
+            locationLoader.load(File(frame.ref.id)) { stage.locationLabel.text = it.orEmpty() }
         } else {
             locationLoader.cancel()
         }
@@ -376,9 +436,9 @@ class SlideshowActivity : Activity() {
         stage.clearImages(preserveVisible = preserveCurrentPhoto)
     }
 
-    private fun decode(file: File): PhotoFrame? {
-        val bitmap = PhotoImageDecoder.decodeForDisplay(this, file) ?: return null
-        return PhotoFrame(bitmap, PhotoMetadata.dateText(file), file, file.name)
+    private fun decode(ref: PhotoRef): PhotoFrame? {
+        val bitmap = PhotoImageDecoder.decodeForDisplay(this, File(ref.id)) ?: return null
+        return PhotoFrame(bitmap, PhotoMetadata.dateText(ref.captureTimeMillis), ref)
     }
 
     private fun togglePlayback() {
@@ -431,8 +491,8 @@ class SlideshowActivity : Activity() {
     }
 
     private fun returnToGallery() {
-        val shownPhotoPath = photos.getOrNull(displayedPhotoIndex)?.absolutePath
-            ?: photos.getOrNull(currentPhotoIndex)?.absolutePath
+        val shownPhotoPath = photos.getOrNull(displayedPhotoIndex)?.id
+            ?: photos.getOrNull(currentPhotoIndex)?.id
             ?: initialPhotoPath
         if (shownPhotoPath != null) {
             setResult(
@@ -446,11 +506,10 @@ class SlideshowActivity : Activity() {
     private class PhotoFrame(
         val bitmap: Bitmap,
         val date: String,
-        val file: File,
-        val photoName: String
+        val ref: PhotoRef
     )
 
-    private data class PrefetchedFrame(val index: Int, val frame: PhotoFrame)
+    private data class PrefetchedFrame(val refId: String, val frame: PhotoFrame)
 
     companion object {
         const val START_PHOTO_PATH = "start_photo_path"

@@ -28,7 +28,11 @@ internal object PhotoMetadata {
 
     /** The capture date as shown under a photo, for example "Mar 05, 2025". */
     fun dateText(file: File): String =
-        DateFormat.format("MMM dd, yyyy", captureTimeMillis(file)).toString()
+        dateText(captureTimeMillis(file))
+
+    /** Formats a known capture timestamp without re-reading EXIF from disk. */
+    fun dateText(captureTimeMillis: Long): String =
+        DateFormat.format("MMM dd, yyyy", captureTimeMillis).toString()
 
     /** Latitude and longitude from the photo's EXIF, or null when it has no GPS position. */
     fun coordinates(file: File): DoubleArray? {

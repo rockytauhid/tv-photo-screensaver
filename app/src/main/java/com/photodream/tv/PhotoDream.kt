@@ -17,7 +17,7 @@ class PhotoDream : DreamService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var worker: ExecutorService? = null
     private var isRunning = false
-    private var photos: List<File> = emptyList()
+    private var photos: List<PhotoRef> = emptyList()
     private var nextPhoto = 0
     private var lastShownPath: String? = null
     private var consecutiveFailures = 0
@@ -62,25 +62,77 @@ class PhotoDream : DreamService() {
 
         val sortOrder = preferences.sortOrder
         val favoritesOnly = preferences.playFavoritesOnly
+        val favoritePaths = preferences.favoritePaths()
+        val source = repository.localSource(folderPath)
         worker?.execute {
-            val ordered = repository.loadPlaybackPhotos(folderPath, preferences)
+            val cached = source.loadCached()
+            val initialRefs = if (cached.isNotEmpty()) {
+                cached
+            } else {
+                PhotoRepository.safeRefresh(source, emptyList()).items
+            }
+            val ordered = PhotoRepository.orderPlaybackRefs(
+                initialRefs,
+                sortOrder,
+                favoritesOnly,
+                favoritePaths
+            )
             mainHandler.post {
                 if (!isRunning) return@post
                 photos = ordered
                 if (photos.isEmpty()) {
-                    stage.status.setText(
-                        if (favoritesOnly) R.string.no_favorite_photos else R.string.no_photos_found
-                    )
+                    stage.status.setText(R.string.no_photos_found)
                     stage.status.visibility = View.VISIBLE
                 } else {
                     // Newest first continues where the last session stopped, so a long run does not
                     // keep showing the same newest photos. Shuffle picks a fresh random order anyway.
                     nextPhoto = if (sortOrder == PhotoSortOrder.DATE_TIME) {
-                        PhotoFiles.resumeIndex(photos, preferences.dreamResumePath)
+                        val lastIndex = preferences.dreamResumePath?.let { resume ->
+                            photos.indexOfFirst { it.id == resume }
+                        } ?: -1
+                        if (lastIndex < 0) 0 else (lastIndex + 1) % photos.size
                     } else {
                         0
                     }
                     showNextPhoto()
+                }
+                if (cached.isNotEmpty()) {
+                    refreshInBackground(source, cached, sortOrder, favoritesOnly, favoritePaths)
+                }
+            }
+        }
+    }
+
+    private fun refreshInBackground(
+        source: PhotoSource,
+        cached: List<PhotoRef>,
+        sortOrder: PhotoSortOrder,
+        favoritesOnly: Boolean,
+        favoritePaths: Set<String>
+    ) {
+        worker?.execute {
+            val refreshed = PhotoRepository.safeRefresh(source, cached)
+            if (!refreshed.changed) return@execute
+            val ordered = PhotoRepository.orderPlaybackRefs(
+                refreshed.items,
+                sortOrder,
+                favoritesOnly,
+                favoritePaths
+            )
+            mainHandler.post {
+                if (!isRunning) return@post
+                val oldNextId = photos.getOrNull(nextPhoto)?.id
+                photos = ordered
+                if (photos.isEmpty()) {
+                    clearPrefetched()
+                    stage.status.setText(R.string.no_photos_found)
+                    stage.status.visibility = View.VISIBLE
+                    return@post
+                }
+                nextPhoto = PhotoRepository.nextIndexAfterRefresh(photos, lastShownPath, oldNextId)
+                val prefetchedId = prefetched?.refId
+                if (prefetchedId != null && photos.getOrNull(nextPhoto)?.id != prefetchedId) {
+                    clearPrefetched()
                 }
             }
         }
@@ -113,16 +165,16 @@ class PhotoDream : DreamService() {
         if (!isRunning || photos.isEmpty()) return
 
         val index = nextPhoto
+        val ref = photos[index]
         nextPhoto = (index + 1) % photos.size
-        val cached = takePrefetched(index)
+        val cached = takePrefetched(ref.id)
         if (cached != null) {
             onFrameReady(cached)
             return
         }
 
-        val photo = photos[index]
         currentWorker.execute {
-            val frame = decode(photo)
+            val frame = decode(ref)
             mainHandler.post {
                 if (!isRunning) {
                     frame?.bitmap?.recycle()
@@ -140,7 +192,7 @@ class PhotoDream : DreamService() {
     private fun onFrameReady(frame: PhotoFrame) {
         consecutiveFailures = 0
         present(frame)
-        lastShownPath = frame.file.absolutePath
+        lastShownPath = frame.ref.id
         scheduleNext(preferences.speed.intervalSeconds * 1000L)
         prefetchNext()
     }
@@ -157,27 +209,26 @@ class PhotoDream : DreamService() {
     private fun prefetchNext() {
         val currentWorker = worker ?: return
         if (!isRunning || photos.size < 2) return
-        val targetIndex = nextPhoto
-        if (prefetched?.index == targetIndex) return
+        val targetRef = photos.getOrNull(nextPhoto) ?: return
+        if (prefetched?.refId == targetRef.id) return
         clearPrefetched()
-        val photo = photos[targetIndex]
         currentWorker.execute {
-            val frame = decode(photo) ?: return@execute
+            val frame = decode(targetRef) ?: return@execute
             mainHandler.post {
-                if (!isRunning || nextPhoto != targetIndex) {
+                if (!isRunning || photos.getOrNull(nextPhoto)?.id != targetRef.id) {
                     frame.bitmap.recycle()
                     return@post
                 }
                 clearPrefetched()
-                prefetched = PrefetchedFrame(targetIndex, frame)
+                prefetched = PrefetchedFrame(targetRef.id, frame)
             }
         }
     }
 
-    private fun takePrefetched(index: Int): PhotoFrame? {
+    private fun takePrefetched(refId: String): PhotoFrame? {
         val ready = prefetched ?: return null
         prefetched = null
-        if (ready.index == index) return ready.frame
+        if (ready.refId == refId) return ready.frame
         ready.frame.bitmap.recycle()
         return null
     }
@@ -189,12 +240,12 @@ class PhotoDream : DreamService() {
 
     private fun present(frame: PhotoFrame) {
         val distance = window?.decorView?.width?.toFloat()?.takeIf { it > 0f } ?: 1920f
-        stage.present(frame.bitmap, frame.file.name, preferences.transition, distance)
+        stage.present(frame.bitmap, frame.ref.displayName, preferences.transition, distance)
 
         stage.dateLabel.text = if (preferences.showPhotoDate) frame.date else ""
         stage.locationLabel.text = ""
         if (preferences.showPhotoLocation) {
-            locationLoader.load(frame.file) { stage.locationLabel.text = it.orEmpty() }
+            locationLoader.load(File(frame.ref.id)) { stage.locationLabel.text = it.orEmpty() }
         } else {
             locationLoader.cancel()
         }
@@ -218,11 +269,11 @@ class PhotoDream : DreamService() {
         if (::stage.isInitialized) stage.clearImages()
     }
 
-    private fun decode(file: File): PhotoFrame? {
-        val bitmap = PhotoImageDecoder.decodeForDisplay(this, file) ?: return null
-        return PhotoFrame(bitmap, PhotoMetadata.dateText(file), file)
+    private fun decode(ref: PhotoRef): PhotoFrame? {
+        val bitmap = PhotoImageDecoder.decodeForDisplay(this, File(ref.id)) ?: return null
+        return PhotoFrame(bitmap, PhotoMetadata.dateText(ref.captureTimeMillis), ref)
     }
 
-    private data class PhotoFrame(val bitmap: Bitmap, val date: String, val file: File)
-    private data class PrefetchedFrame(val index: Int, val frame: PhotoFrame)
+    private data class PhotoFrame(val bitmap: Bitmap, val date: String, val ref: PhotoRef)
+    private data class PrefetchedFrame(val refId: String, val frame: PhotoFrame)
 }

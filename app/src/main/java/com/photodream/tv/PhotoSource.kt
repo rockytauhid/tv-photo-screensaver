@@ -92,32 +92,61 @@ internal class PhotoRepository(private val context: Context) {
     fun loadPlaybackPhotos(
         folderPath: String,
         preferences: PhotoPreferences
-    ): List<File> {
-        val source = localSource(folderPath)
-        val refs = loadCachedOrRefresh(source)
-        val files = refs.map { File(it.id) }
-        val candidates = if (preferences.playFavoritesOnly) {
-            PhotoFavorites.filter(files, preferences.favoritePaths())
-        } else {
-            files
-        }
-        return when (preferences.sortOrder) {
-            PhotoSortOrder.RANDOM -> candidates.shuffled()
-            PhotoSortOrder.DATE_TIME -> {
-                val timeline = PhotoIndex.buildTimelineFromRefs(refs)
-                PhotoFiles.photosInTimeline(
-                    candidates,
-                    timeline,
-                    year = null,
-                    month = null,
-                    newestFirst = true
-                )
-            }
-        }
-    }
+    ): List<File> =
+        orderPlaybackRefs(
+            loadCachedOrRefresh(localSource(folderPath)),
+            preferences.sortOrder,
+            preferences.playFavoritesOnly,
+            preferences.favoritePaths()
+        ).map { File(it.id) }
 
     companion object {
         private const val INDEX_FILE_NAME = "photo_index.tsv"
+
+        /**
+         * Filters and orders [refs] for slideshow/screensaver playback. If [favoritesOnly] is true
+         * but none of [favoritePaths] are present in [refs], falls back to all [refs] for this run
+         * without rewriting preferences.
+         */
+        internal fun orderPlaybackRefs(
+            refs: List<PhotoRef>,
+            sortOrder: PhotoSortOrder,
+            favoritesOnly: Boolean,
+            favoritePaths: Set<String>
+        ): List<PhotoRef> {
+            val candidates = if (favoritesOnly) {
+                val matched = refs.filter { it.id in favoritePaths }
+                matched.ifEmpty { refs }
+            } else {
+                refs
+            }
+            return when (sortOrder) {
+                PhotoSortOrder.RANDOM -> candidates.shuffled()
+                PhotoSortOrder.DATE_TIME -> candidates.sortedByDescending { it.captureTimeMillis }
+            }
+        }
+
+        /**
+         * Computes the new `nextPhoto` index after a background refresh swaps in [newItems] without
+         * interrupting the currently displayed photo ([currentId]). Keeps pointing at [nextId] if
+         * it is still present, otherwise continues after [currentId], otherwise starts at 0.
+         */
+        internal fun nextIndexAfterRefresh(
+            newItems: List<PhotoRef>,
+            currentId: String?,
+            nextId: String?
+        ): Int {
+            if (newItems.isEmpty()) return 0
+            if (nextId != null) {
+                val nextIndex = newItems.indexOfFirst { it.id == nextId }
+                if (nextIndex >= 0) return nextIndex
+            }
+            if (currentId != null) {
+                val currentIndex = newItems.indexOfFirst { it.id == currentId }
+                if (currentIndex >= 0) return (currentIndex + 1) % newItems.size
+            }
+            return 0
+        }
 
         /**
          * Offline-first helper: returns cached items immediately when available, or refreshes when
