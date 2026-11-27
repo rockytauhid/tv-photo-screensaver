@@ -192,6 +192,11 @@ Rules for cloud code:
   `PhotoIndex`, `LocalPhotoSource`, and `PhotoRepository`. On repeat launches, Gallery, Preview, Slideshow, and
   `PhotoDream` open immediately from the cached index; Gallery reconciles quietly in the background and reads EXIF
   only for new or modified files.
+- `DiskPhotoCache` provides a bounded, zero-dependency LRU disk cache in `cacheDir` (32 MB for pre-sized gallery
+  thumbnails so repeat opens skip full-resolution EXIF/JPEG decodes; 128 MB cap ready for remote LAN/cloud photos).
+- `PhotoImageDecoder.decodeFromSource(...)` decodes from any `PhotoSource` stream through `DiskPhotoCache` without
+  buffering full files in RAM, and `NetworkMonitor` provides an API-guarded connectivity check for future LAN/cloud
+  sources.
 - `PhotoPreferences` wraps shared preferences in one typed class.
 - Both `PhotoDream` and `SlideshowActivity` prefetch one frame ahead on their single worker thread while releasing
   outgoing transition bitmaps on animation end (staying within the 3-frame bitmap budget), and cap consecutive decode

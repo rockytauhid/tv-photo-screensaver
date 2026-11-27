@@ -30,6 +30,73 @@ internal object PhotoImageDecoder {
         )
     }
 
+    /**
+     * Decodes a [PhotoRef] from any [PhotoSource] (local, Immich, SMB, cloud), using [diskCache]
+     * for remote sources so EXIF orientation and two-pass sampled decoding work without buffering
+     * the full file in RAM and previously fetched photos remain playable offline.
+     */
+    fun decodeForDisplay(
+        context: Context,
+        source: PhotoSource,
+        ref: PhotoRef,
+        diskCache: DiskPhotoCache? = null,
+        config: Bitmap.Config = Bitmap.Config.ARGB_8888
+    ): Bitmap? {
+        val metrics = context.resources.displayMetrics
+        val bytesPerPixel = if (config == Bitmap.Config.RGB_565) 2L else 4L
+        val bitmapBudgetBytes = (Runtime.getRuntime().maxMemory() / 8)
+            .coerceIn(8L * 1024 * 1024, 256L * 1024 * 1024)
+        return decodeFromSource(
+            source,
+            ref,
+            metrics.widthPixels.coerceAtLeast(1),
+            metrics.heightPixels.coerceAtLeast(1),
+            diskCache,
+            config,
+            (bitmapBudgetBytes / bytesPerPixel).toInt()
+        )
+    }
+
+    fun decodeFromSource(
+        source: PhotoSource,
+        ref: PhotoRef,
+        maxWidth: Int,
+        maxHeight: Int,
+        diskCache: DiskPhotoCache? = null,
+        config: Bitmap.Config = Bitmap.Config.ARGB_8888,
+        maxPixels: Int = Int.MAX_VALUE
+    ): Bitmap? {
+        if (source is LocalPhotoSource) {
+            return decode(File(ref.id), maxWidth, maxHeight, config, maxPixels)
+        }
+        val cacheKey = "${ref.sourceId}|${ref.id}|${ref.lastModified}|${maxWidth}x${maxHeight}"
+        val cachedFile = diskCache?.get(cacheKey)
+        if (cachedFile != null) {
+            return decode(cachedFile, maxWidth, maxHeight, config, maxPixels)
+        }
+        val stream = source.open(ref, maxWidth, maxHeight) ?: return null
+        return stream.use { input ->
+            if (diskCache != null) {
+                val saved = diskCache.putStream(cacheKey, input) ?: return@use null
+                decode(saved, maxWidth, maxHeight, config, maxPixels)
+            } else {
+                val temp = try {
+                    File.createTempFile("photo-stream-", ".img")
+                } catch (_: IOException) {
+                    return@use null
+                }
+                try {
+                    temp.outputStream().use { input.copyTo(it, 16 * 1024) }
+                    decode(temp, maxWidth, maxHeight, config, maxPixels)
+                } catch (_: IOException) {
+                    null
+                } finally {
+                    temp.delete()
+                }
+            }
+        }
+    }
+
     fun decode(
         file: File,
         maxWidth: Int,

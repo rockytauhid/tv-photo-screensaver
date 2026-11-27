@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -1051,6 +1052,10 @@ class GalleryActivity : Activity() {
         private val thumbnailCache = object : LruCache<String, Bitmap>(cacheBytes) {
             override fun sizeOf(key: String, bitmap: Bitmap): Int = bitmap.byteCount
         }
+        private val thumbnailDiskCache = DiskPhotoCache(
+            File(cacheDir, "thumbnails"),
+            DiskPhotoCache.THUMBNAIL_CACHE_BYTES
+        )
         private val failedThumbnails = LinkedHashSet<String>()
         private val thumbnailExecutor = ThreadPoolExecutor(
             2,
@@ -1267,13 +1272,32 @@ class GalleryActivity : Activity() {
             holder.taskKey = null
         }
 
-        private fun decodeThumbnail(file: File): Bitmap? =
-            PhotoImageDecoder.decode(
+        private fun decodeThumbnail(file: File): Bitmap? {
+            val targetPx = minOf(dp(thumbnailSizeDp) * 2, 512)
+            val diskKey = "${file.absolutePath}|${file.lastModified()}|$targetPx"
+            val cachedFile = thumbnailDiskCache.get(diskKey)
+            if (cachedFile != null) {
+                val cachedBitmap = try {
+                    BitmapFactory.decodeFile(
+                        cachedFile.absolutePath,
+                        BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                    )
+                } catch (_: OutOfMemoryError) {
+                    null
+                }
+                if (cachedBitmap != null) return cachedBitmap
+            }
+            val decoded = PhotoImageDecoder.decode(
                 file,
-                minOf(dp(thumbnailSizeDp) * 2, 512),
-                minOf(dp(thumbnailSizeDp) * 2, 512),
+                targetPx,
+                targetPx,
                 Bitmap.Config.RGB_565
-            )
+            ) ?: return null
+            thumbnailDiskCache.put(diskKey) { output ->
+                decoded.compress(Bitmap.CompressFormat.JPEG, 82, output)
+            }
+            return decoded
+        }
 
         private fun hasFailedThumbnail(key: String): Boolean =
             synchronized(failedThumbnails) { key in failedThumbnails }
