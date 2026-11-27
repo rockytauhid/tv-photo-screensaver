@@ -24,6 +24,8 @@ class PhotoIndexTest {
 
             assertEquals(entries, PhotoIndex.load(indexFile, "/storage/emulated/0/Pictures"))
             assertEquals(emptyList<IndexedPhoto>(), PhotoIndex.load(indexFile, "/storage/other"))
+            val leftoverTempFiles = dir.listFiles()?.filter { it.name.endsWith(".tmp") }.orEmpty()
+            assertEquals(emptyList<File>(), leftoverTempFiles)
         } finally {
             dir.deleteRecursively()
         }

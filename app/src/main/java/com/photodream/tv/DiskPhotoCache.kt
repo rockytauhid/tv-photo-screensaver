@@ -79,6 +79,7 @@ internal class DiskPhotoCache(
     }
 
     private fun evictIfNeededLocked() {
+        cleanupOrphanTempFilesLocked()
         val files = cacheFilesLocked()
         var total = files.sumOf(File::length)
         if (total <= maxBytes) return
@@ -88,6 +89,14 @@ internal class DiskPhotoCache(
             val size = file.length()
             if (file.delete()) {
                 total -= size
+            }
+        }
+    }
+
+    private fun cleanupOrphanTempFilesLocked() {
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.endsWith(".tmp")) {
+                file.delete()
             }
         }
     }

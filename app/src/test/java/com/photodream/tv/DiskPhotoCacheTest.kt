@@ -79,6 +79,21 @@ class DiskPhotoCacheTest {
     }
 
     @Test
+    fun cleansUpOrphanedTempFilesOnPut() {
+        val dir = createTempDirectory()
+        try {
+            val orphan = File(dir, "crashed-write.tmp").apply { writeBytes(ByteArray(50)) }
+            assertTrue(orphan.exists())
+
+            val cache = DiskPhotoCache(dir, maxBytes = 1024)
+            assertNotNull(cache.putStream("fresh", ByteArrayInputStream(byteArrayOf(1, 2, 3))))
+            assertTrue(!orphan.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun hashesDistinctKeysToDistinctFilenames() {
         assertNotEquals(DiskPhotoCache.hashKey("a/b"), DiskPhotoCache.hashKey("a_b"))
         assertEquals(64, DiskPhotoCache.hashKey("sample").length)

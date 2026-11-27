@@ -35,6 +35,7 @@ internal data class PhotoReconcileResult(
  */
 internal object PhotoIndex {
     private const val HEADER_VERSION = "v1"
+    private val saveLock = Any()
 
     fun load(indexFile: File, expectedFolderPath: String): List<IndexedPhoto> {
         if (!indexFile.isFile) return emptyList()
@@ -58,32 +59,38 @@ internal object PhotoIndex {
     }
 
     fun save(indexFile: File, folderPath: String, entries: List<IndexedPhoto>) {
-        val parent = indexFile.parentFile
-        if (parent != null && !parent.exists()) parent.mkdirs()
-        val tempFile = File(parent ?: indexFile.absoluteFile.parentFile, "${indexFile.name}.tmp")
-        try {
-            BufferedWriter(OutputStreamWriter(FileOutputStream(tempFile), StandardCharsets.UTF_8)).use { writer ->
-                writer.write(HEADER_VERSION)
-                writer.write('\t'.code)
-                writer.write(escape(folderPath))
-                writer.newLine()
-                entries.forEach { entry ->
-                    writer.write(entry.lastModified.toString())
+        synchronized<Unit>(saveLock) {
+            val parent = indexFile.parentFile ?: indexFile.absoluteFile.parentFile
+            if (parent != null && !parent.exists()) parent.mkdirs()
+            val tempFile = try {
+                File.createTempFile("${indexFile.name}.", ".tmp", parent)
+            } catch (_: IOException) {
+                return
+            }
+            try {
+                BufferedWriter(OutputStreamWriter(FileOutputStream(tempFile), StandardCharsets.UTF_8)).use { writer ->
+                    writer.write(HEADER_VERSION)
                     writer.write('\t'.code)
-                    writer.write(entry.size.toString())
-                    writer.write('\t'.code)
-                    writer.write(entry.captureTimeMillis.toString())
-                    writer.write('\t'.code)
-                    writer.write(escape(entry.path))
+                    writer.write(escape(folderPath))
                     writer.newLine()
+                    entries.forEach { entry ->
+                        writer.write(entry.lastModified.toString())
+                        writer.write('\t'.code)
+                        writer.write(entry.size.toString())
+                        writer.write('\t'.code)
+                        writer.write(entry.captureTimeMillis.toString())
+                        writer.write('\t'.code)
+                        writer.write(escape(entry.path))
+                        writer.newLine()
+                    }
                 }
+                if (!tempFile.renameTo(indexFile)) {
+                    if (indexFile.exists()) indexFile.delete()
+                    if (!tempFile.renameTo(indexFile)) tempFile.delete()
+                }
+            } catch (_: IOException) {
+                tempFile.delete()
             }
-            if (!tempFile.renameTo(indexFile)) {
-                if (indexFile.exists()) indexFile.delete()
-                if (!tempFile.renameTo(indexFile)) tempFile.delete()
-            }
-        } catch (_: IOException) {
-            tempFile.delete()
         }
     }
 

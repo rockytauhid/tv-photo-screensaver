@@ -27,10 +27,12 @@ internal data class PhotoTimeline(
 internal object PhotoFiles {
     private val extensions = setOf("jpg", "jpeg", "png", "webp", "gif")
 
-    fun isSupportedImage(file: File): Boolean =
-        file.isFile &&
-            !file.name.startsWith(".") &&
+    fun hasSupportedExtension(file: File): Boolean =
+        !file.name.startsWith(".") &&
             file.extension.lowercase(Locale.ROOT) in extensions
+
+    fun isSupportedImage(file: File): Boolean =
+        hasSupportedExtension(file) && file.isFile
 
     fun listImages(root: File): List<File> {
         if (!root.isDirectory) return emptyList()
@@ -52,10 +54,14 @@ internal object PhotoFiles {
             val children = directory.listFiles() ?: continue
             for (child in children) {
                 if (child.name.startsWith(".")) continue
-                if (child.isDirectory) {
+                if (hasSupportedExtension(child)) {
+                    if (child.isFile) {
+                        photos.add(child)
+                    } else if (child.isDirectory) {
+                        pending.add(child)
+                    }
+                } else if (child.isDirectory) {
                     pending.add(child)
-                } else if (isSupportedImage(child)) {
-                    photos.add(child)
                 }
             }
         }
