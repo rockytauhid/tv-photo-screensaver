@@ -584,7 +584,7 @@ class GalleryActivity : Activity() {
         val source = repository.localSource(folderPath)
         val cachedRefs = source.loadCached()
         if (cachedRefs.isNotEmpty()) {
-            applyLoadedRefs(cachedRefs, keepPath = null)
+            applyLoadedRefs(cachedRefs, keepPath = null, requestGridFocus = true)
         } else {
             renderState(GalleryUiState.Loading)
         }
@@ -602,7 +602,11 @@ class GalleryActivity : Activity() {
             if (cachedRefs.isNotEmpty() && !refreshed.changed) return@execute
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
-                applyLoadedRefs(refreshed.items, keepPath = currentPhotoPath())
+                applyLoadedRefs(
+                    refreshed.items,
+                    keepPath = currentPhotoPath(),
+                    requestGridFocus = cachedRefs.isEmpty()
+                )
             }
         }
     }
@@ -654,7 +658,11 @@ class GalleryActivity : Activity() {
         }
     }
 
-    private fun applyLoadedRefs(refs: List<PhotoRef>, keepPath: String?) {
+    private fun applyLoadedRefs(
+        refs: List<PhotoRef>,
+        keepPath: String?,
+        requestGridFocus: Boolean
+    ) {
         val foundPhotos = refs.map { File(it.id) }
         val allPhotoTimeline = PhotoIndex.buildTimelineFromRefs(refs)
         val initialFavoritePaths = preferences.favoritePaths()
@@ -706,7 +714,9 @@ class GalleryActivity : Activity() {
                 ?.takeIf { it >= 0 }
                 ?: 0
             jumpTo(targetIndex, null)
-            grid.requestFocus()
+            if (requestGridFocus || (!optionsOverlay.isVisible && currentFocus == null)) {
+                grid.requestFocus()
+            }
         }
     }
 
@@ -1108,17 +1118,22 @@ class GalleryActivity : Activity() {
             val cached = thumbnailCache.get(key)
             if (cached != null) {
                 cancel(holder)
+                holder.image.animate().cancel()
+                holder.image.alpha = 1f
                 holder.image.setImageBitmap(cached)
                 holder.placeholder.visibility = View.GONE
             } else if (hasFailedThumbnail(key)) {
                 cancel(holder)
+                holder.image.animate().cancel()
+                holder.image.alpha = 1f
                 holder.image.setImageDrawable(null)
                 holder.placeholder.setText(R.string.gallery_thumbnail_unavailable)
                 holder.placeholder.visibility = View.VISIBLE
             } else {
+                holder.image.animate().cancel()
+                holder.image.alpha = 1f
                 holder.image.setImageDrawable(null)
-                holder.placeholder.setText(R.string.gallery_thumbnail_loading)
-                holder.placeholder.visibility = View.VISIBLE
+                holder.placeholder.visibility = View.GONE
                 if (holder.taskKey != key) {
                     cancel(holder)
                     val task = ThumbnailTask(key, photo, holder)
@@ -1225,7 +1240,7 @@ class GalleryActivity : Activity() {
             }
             val image = ImageView(this@GalleryActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(0xFF252525.toInt())
+                setBackgroundColor(TvDesignTokens.surfaceCard)
                 isFocusable = false
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
@@ -1338,7 +1353,10 @@ class GalleryActivity : Activity() {
                     }
                     if (holder.boundKey == key && holder.image.tag == key) {
                         if (bitmap != null) {
+                            holder.image.animate().cancel()
+                            holder.image.alpha = 0f
                             holder.image.setImageBitmap(bitmap)
+                            holder.image.animate().alpha(1f).setDuration(120).start()
                             holder.placeholder.visibility = View.GONE
                         } else {
                             holder.placeholder.setText(R.string.gallery_thumbnail_unavailable)
