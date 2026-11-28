@@ -72,9 +72,9 @@
     <string name="options_close">Close</string>
     <string name="options_add_favorite">Add To Favorites</string>
     <string name="options_remove_favorite">Remove From Favorites</string>
-    <string name="transition_cut">Cut</string>
     <string name="transition_fade">Fade</string>
     <string name="transition_slide">Slide</string>
+    <string name="transition_slow_zoom">Slow Zoom</string>
     <string name="on">On</string>
     <string name="off">Off</string>
     <string name="settings_hint">Supported files: JPEG, PNG, WebP and GIF.</string>

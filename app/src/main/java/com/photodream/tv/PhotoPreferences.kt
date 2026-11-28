@@ -91,7 +91,7 @@ internal class PhotoPreferences(private val preferences: SharedPreferences) {
     fun cycleTransition(): String {
         val next = when (transition) {
             SettingsActivity.FADE -> SettingsActivity.SLIDE
-            SettingsActivity.SLIDE -> SettingsActivity.CUT
+            SettingsActivity.SLIDE -> SettingsActivity.SLOW_ZOOM
             else -> SettingsActivity.FADE
         }
         transition = next

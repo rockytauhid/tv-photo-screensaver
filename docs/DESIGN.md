@@ -266,8 +266,9 @@ Keep these intentional behaviours intact when refactoring or optimizing:
   display and heap budget, applies EXIF orientation (including mirrored orientations), reads EXIF capture date and GPS
   coordinates when present, and gracefully skips unreadable or out-of-memory files.
 - Speed presets map Slow, Medium and Fast to 15, 8 and 3 seconds. Shuffle toggles random ordering; when off,
-  photos are shown newest first (and the screensaver resumes after the last shown photo). Styles are cut, crossfade
-  and horizontal slide. Photo date and photo location visibility can be toggled independently.
+  photos are shown newest first (and the screensaver resumes after the last shown photo). Styles are fade,
+  decelerated horizontal slide, and slow zoom (900 ms crossfade + gentle 1.00× → 1.07× zoom). Photo date and photo
+  location visibility can be toggled independently.
 - The app opens to a D-pad photo gallery with a uniform 20dp safe-area margin aligning the header title, top-right
   action icons (Favorites/All, play-slideshow, Settings), and bottom-left date label (and mirrored by Preview's
   top-left photo counter `1 of N`, top-right icons, and bottom date/location footer). When photo access has not been

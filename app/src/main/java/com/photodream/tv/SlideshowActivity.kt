@@ -377,7 +377,13 @@ class SlideshowActivity : Activity() {
 
     private fun present(frame: PhotoFrame) {
         val distance = window.decorView.width.toFloat().takeIf { it > 0f } ?: 1920f
-        stage.present(frame.bitmap, frame.ref.displayName, preferences.transition, distance)
+        stage.present(
+            frame.bitmap,
+            frame.ref.displayName,
+            preferences.transition,
+            distance,
+            preferences.speed.intervalSeconds * 1000L
+        )
 
         stage.dateLabel.text = if (preferences.showPhotoDate) frame.date else ""
         stage.locationLabel.text = ""
@@ -473,6 +479,7 @@ class SlideshowActivity : Activity() {
                 showPhotoAt(nextPhoto.takeIf { it in photos.indices } ?: 0)
             }
         }
+        stage.setMotionPaused(paused)
         showPlaybackIndicator(paused)
     }
 

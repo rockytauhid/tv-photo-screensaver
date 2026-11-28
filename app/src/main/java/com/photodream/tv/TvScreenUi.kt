@@ -386,7 +386,8 @@ internal class SlideshowStage(context: Context, handler: Handler) {
         bitmap: Bitmap,
         contentDescription: String?,
         transition: String?,
-        slideDistance: Float
+        slideDistance: Float,
+        holdDurationMs: Long = 8000L
     ) {
         val newIndex = if (imageViews[visibleImage].drawable == null) visibleImage else 1 - visibleImage
         val oldIndex = 1 - newIndex
@@ -401,39 +402,89 @@ internal class SlideshowStage(context: Context, handler: Handler) {
         incoming.visibility = View.VISIBLE
         incoming.alpha = 1f
         incoming.translationX = 0f
+        incoming.scaleX = 1f
+        incoming.scaleY = 1f
         status.visibility = View.GONE
 
         when (transition) {
-            SettingsActivity.FADE -> {
+            SettingsActivity.SLIDE -> {
+                val interpolator = DecelerateInterpolator(1.6f)
+                incoming.translationX = slideDistance
+                incoming.animate()
+                    .translationX(0f)
+                    .setDuration(700)
+                    .setInterpolator(interpolator)
+                    .start()
                 if (outgoing.drawable == null) {
                     outgoing.visibility = View.INVISIBLE
                 } else {
-                    outgoing.animate().alpha(0f).setDuration(900)
+                    outgoing.animate()
+                        .translationX(-slideDistance)
+                        .setDuration(700)
+                        .setInterpolator(interpolator)
+                        .withEndAction { releaseOutgoing(outgoing, bitmap) }
+                        .start()
+                }
+            }
+            SettingsActivity.SLOW_ZOOM -> {
+                if (outgoing.drawable == null) {
+                    outgoing.visibility = View.INVISIBLE
+                } else {
+                    outgoing.animate()
+                        .alpha(0f)
+                        .setDuration(900)
+                        .setInterpolator(LinearInterpolator())
                         .withEndAction { releaseOutgoing(outgoing, bitmap) }
                         .start()
                 }
                 incoming.alpha = 0f
-                incoming.animate().alpha(1f).setDuration(900).start()
+                incoming.animate()
+                    .alpha(1f)
+                    .setDuration(900)
+                    .setInterpolator(LinearInterpolator())
+                    .withEndAction {
+                        incoming.animate()
+                            .scaleX(1.07f)
+                            .scaleY(1.07f)
+                            .setDuration(holdDurationMs.coerceAtLeast(2000L))
+                            .setInterpolator(LinearInterpolator())
+                            .start()
+                    }
+                    .start()
             }
-            SettingsActivity.SLIDE -> {
-                incoming.translationX = slideDistance
-                incoming.animate().translationX(0f).setDuration(700).start()
+            else -> {
                 if (outgoing.drawable == null) {
                     outgoing.visibility = View.INVISIBLE
                 } else {
-                    outgoing.animate().translationX(-slideDistance).setDuration(700)
+                    outgoing.animate()
+                        .alpha(0f)
+                        .setDuration(900)
+                        .setInterpolator(LinearInterpolator())
                         .withEndAction { releaseOutgoing(outgoing, bitmap) }
                         .start()
                 }
+                incoming.alpha = 0f
+                incoming.animate()
+                    .alpha(1f)
+                    .setDuration(900)
+                    .setInterpolator(LinearInterpolator())
+                    .start()
             }
-            else -> releaseOutgoing(outgoing, bitmap)
         }
         visibleImage = newIndex
+    }
+
+    fun setMotionPaused(paused: Boolean) {
+        if (paused) {
+            imageViews[visibleImage].animate().cancel()
+        }
     }
 
     private fun releaseOutgoing(outgoing: ImageView, activeBitmap: Bitmap) {
         outgoing.visibility = View.INVISIBLE
         outgoing.translationX = 0f
+        outgoing.scaleX = 1f
+        outgoing.scaleY = 1f
         val oldBitmap = (outgoing.drawable as? BitmapDrawable)?.bitmap
         outgoing.setImageDrawable(null)
         if (oldBitmap != null && oldBitmap !== activeBitmap) oldBitmap.recycle()
@@ -463,6 +514,8 @@ internal class SlideshowStage(context: Context, handler: Handler) {
                 image.visibility = View.INVISIBLE
                 image.alpha = 1f
                 image.translationX = 0f
+                image.scaleX = 1f
+                image.scaleY = 1f
             }
         }
         if (!preserveVisible) visibleImage = 0

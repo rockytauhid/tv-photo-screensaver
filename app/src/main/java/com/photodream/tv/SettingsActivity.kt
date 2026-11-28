@@ -223,7 +223,7 @@ class SettingsActivity : Activity() {
             styleOption = addOption(content) {
                 val next = when (preferences.getString(TRANSITION, FADE)) {
                     FADE -> SLIDE
-                    SLIDE -> CUT
+                    SLIDE -> SLOW_ZOOM
                     else -> FADE
                 }
                 preferences.edit().putString(TRANSITION, next).apply()
@@ -339,7 +339,7 @@ class SettingsActivity : Activity() {
 
         val transitionName = when (preferences.getString(TRANSITION, FADE)) {
             SLIDE -> R.string.transition_slide
-            CUT -> R.string.transition_cut
+            SLOW_ZOOM -> R.string.transition_slow_zoom
             else -> R.string.transition_fade
         }
         styleOption.text = getString(R.string.style_setting, getString(transitionName))
@@ -523,6 +523,7 @@ class SettingsActivity : Activity() {
         const val DREAM_RESUME_PATH = "dream_resume_path"
         const val FADE = "fade"
         const val SLIDE = "slide"
+        const val SLOW_ZOOM = "slow_zoom"
         const val CUT = "cut"
         const val ORDER_DATE_TIME = "date_time"
         const val ORDER_RANDOM = "random"
