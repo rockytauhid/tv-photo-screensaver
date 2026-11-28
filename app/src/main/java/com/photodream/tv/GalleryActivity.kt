@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -38,9 +39,11 @@ import androidx.leanback.widget.HorizontalGridView
 import androidx.leanback.widget.OnChildViewHolderSelectedListener
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
+import java.io.IOException
 import java.text.DateFormatSymbols
 import java.util.LinkedHashSet
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.RejectedExecutionHandler
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
@@ -103,6 +106,9 @@ class GalleryActivity : Activity() {
     private var openedInitialSettings = false
     private var requestedInitialPermission = false
     private var waitingForStorage = false
+    private var freshExifScanPending = false
+    @Volatile
+    private var initialThumbnailLatch: CountDownLatch? = null
     private var storageRetryCount = 0
     private var storageRetryRunnable: Runnable? = null
     private var lastBackPressMillis = 0L
@@ -195,7 +201,8 @@ class GalleryActivity : Activity() {
         }
         if (currentFolder != null && hasPermission) {
             val available = LocalPhotoSource.isFolderAvailable(File(currentFolder))
-            if (waitingForStorage && available) {
+            if ((waitingForStorage || freshExifScanPending) && available) {
+                freshExifScanPending = false
                 loadPhotos()
                 return
             }
@@ -661,24 +668,38 @@ class GalleryActivity : Activity() {
                     size = file.length()
                 )
             }
+            val latch = CountDownLatch(minOf(fastRefs.size, INITIAL_THUMBNAIL_WAIT_COUNT))
+            initialThumbnailLatch = latch
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
                 applyLoadedRefs(fastRefs, keepPath = null, requestGridFocus = true)
             }
-            if (fastFiles.isEmpty() || generation != scanGeneration) return@execute
-
-            try {
-                Thread.sleep(FRESH_FOLDER_EXIF_DELAY_MS)
-            } catch (_: InterruptedException) {
+            if (fastFiles.isEmpty() || generation != scanGeneration) {
+                initialThumbnailLatch = null
                 return@execute
             }
+
+            try {
+                latch.await(FRESH_FOLDER_EXIF_DELAY_MS, TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                initialThumbnailLatch = null
+                return@execute
+            }
+            initialThumbnailLatch = null
             if (generation != scanGeneration) return@execute
 
             val refreshed = try {
                 source.refreshFromFiles(emptyList(), fastFiles)
-            } catch (_: Exception) {
+            } catch (e: IOException) {
+                Log.w(TAG, "Background EXIF scan failed (I/O)", e)
+                freshExifScanPending = true
+                return@execute
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Background EXIF scan failed (permission)", e)
+                freshExifScanPending = true
                 return@execute
             }
+            freshExifScanPending = false
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
                 applyLoadedRefs(
@@ -1558,6 +1579,7 @@ class GalleryActivity : Activity() {
             }
 
             private fun deliverFinal(bitmap: Bitmap?, fadeIn: Boolean) {
+                initialThumbnailLatch?.countDown()
                 mainHandler.post {
                     if (cancelled) return@post
                     if (holder.task === this) {
@@ -1627,7 +1649,9 @@ class GalleryActivity : Activity() {
         private const val REQUEST_STORAGE_PERMISSION = 4
         private const val MAX_STORAGE_WAIT_RETRIES = 15
         private const val STORAGE_WAIT_RETRY_MS = 2000L
+        private const val TAG = "GalleryActivity"
         private const val FRESH_FOLDER_EXIF_DELAY_MS = 1500L
+        private const val INITIAL_THUMBNAIL_WAIT_COUNT = 12
         private const val EXIT_CONFIRM_WINDOW_MS = 2000L
         private const val MAX_FAILED_THUMBNAILS = 128
         private const val MAX_LOADING_SCREEN_MS = 3000L
