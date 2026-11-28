@@ -1443,12 +1443,18 @@ class GalleryActivity : Activity() {
             }
         }
 
-        private fun decodeCrispThumbnail(file: File, targetPx: Int, diskKey: String): Bitmap? {
+        private fun decodeCrispThumbnail(
+            file: File,
+            targetPx: Int,
+            diskKey: String,
+            knownOrientation: Int? = null
+        ): Bitmap? {
             val decoded = PhotoImageDecoder.decode(
                 file,
                 targetPx,
                 targetPx,
-                Bitmap.Config.RGB_565
+                Bitmap.Config.RGB_565,
+                knownOrientation = knownOrientation
             ) ?: return null
             saveCrispThumbnail(diskKey, decoded)
             return decoded
@@ -1493,13 +1499,18 @@ class GalleryActivity : Activity() {
 
                 // Stage 1: show embedded EXIF thumbnail immediately for instant recognition on USB/HDD.
                 var showedPreview = false
-                val embedded = PhotoImageDecoder.decodeEmbeddedThumbnail(file, Bitmap.Config.RGB_565)
+                val embeddedResult = PhotoImageDecoder.decodeEmbeddedThumbnail(
+                    file,
+                    targetPx,
+                    Bitmap.Config.RGB_565
+                )
+                val embedded = embeddedResult.bitmap
                 if (embedded != null) {
                     if (cancelled || closed) {
                         embedded.recycle()
                         return
                     }
-                    if (PhotoImageDecoder.isThumbnailSharpEnough(embedded.width, embedded.height, targetPx)) {
+                    if (embeddedResult.sharpEnough) {
                         saveCrispThumbnail(diskKey, embedded)
                         thumbnailCache.put(key, embedded)
                         deliverFinal(embedded, fadeIn = true)
@@ -1520,7 +1531,12 @@ class GalleryActivity : Activity() {
 
                 // Stage 2: upgrade visible tile to crisp native-resolution thumbnail and cache it.
                 if (cancelled || closed) return
-                val crisp = decodeCrispThumbnail(file, targetPx, diskKey)
+                val crisp = decodeCrispThumbnail(
+                    file,
+                    targetPx,
+                    diskKey,
+                    knownOrientation = embeddedResult.orientation
+                )
                 if (cancelled || closed) {
                     crisp?.recycle()
                     return

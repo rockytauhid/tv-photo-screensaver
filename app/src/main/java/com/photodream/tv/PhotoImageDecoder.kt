@@ -97,21 +97,38 @@ internal object PhotoImageDecoder {
         }
     }
 
+    internal data class EmbeddedThumbnailResult(
+        val bitmap: Bitmap?,
+        val orientation: Int,
+        val sharpEnough: Boolean
+    )
+
     /**
-     * Decodes only the tiny embedded EXIF thumbnail (~10–30 KB) with orientation applied, or null
-     * when the file has none. Used for instant stage-1 gallery previews before the crisp decode.
+     * Decodes only the tiny embedded EXIF thumbnail (~10–30 KB) with orientation applied, rejecting
+     * stale/cropped or mismatched-orientation thumbnails by checking their aspect ratio against
+     * the main image. Also returns the parsed EXIF [orientation] so fallback [decode] skips a
+     * second EXIF parse.
      */
     fun decodeEmbeddedThumbnail(
         file: File,
+        targetPx: Int,
         config: Bitmap.Config = Bitmap.Config.RGB_565
-    ): Bitmap? {
+    ): EmbeddedThumbnailResult {
         val exif = try {
             ExifInterface(file.absolutePath)
         } catch (_: IOException) {
             null
-        } ?: return null
+        } ?: return EmbeddedThumbnailResult(null, ExifInterface.ORIENTATION_NORMAL, false)
+
+        val orientation = exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
         val embedded = exif.thumbnailBytes
-        if (embedded == null || embedded.isEmpty()) return null
+        if (embedded == null || embedded.isEmpty()) {
+            return EmbeddedThumbnailResult(null, orientation, false)
+        }
+
         val thumb = try {
             BitmapFactory.decodeByteArray(
                 embedded,
@@ -121,29 +138,78 @@ internal object PhotoImageDecoder {
             )
         } catch (_: OutOfMemoryError) {
             null
-        } ?: return null
-        val orientation = exif.getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL
-        )
-        return applyOrientation(thumb, orientation)
+        } ?: return EmbeddedThumbnailResult(null, orientation, false)
+
+        var mainW = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
+        var mainH = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+        if (mainW <= 0 || mainH <= 0) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            mainW = bounds.outWidth
+            mainH = bounds.outHeight
+        }
+
+        if (!embeddedAspectMatchesMain(thumb.width, thumb.height, mainW, mainH, orientation)) {
+            thumb.recycle()
+            return EmbeddedThumbnailResult(null, orientation, false)
+        }
+
+        val oriented = applyOrientation(thumb, orientation)
+            ?: return EmbeddedThumbnailResult(null, orientation, false)
+        val sharpEnough = isThumbnailSharpEnough(oriented.width, oriented.height, targetPx)
+        return EmbeddedThumbnailResult(oriented, orientation, sharpEnough)
     }
 
     internal fun isThumbnailSharpEnough(width: Int, height: Int, targetPx: Int): Boolean =
         width > 0 && height > 0 && minOf(width, height) >= targetPx
+
+    /**
+     * Checks that the embedded thumbnail (after applying [orientation]) matches the main image's
+     * oriented aspect ratio within 2%. Rejects stale cropped thumbnails and pre-rotated thumbnails
+     * that would be double-rotated.
+     */
+    internal fun embeddedAspectMatchesMain(
+        thumbW: Int,
+        thumbH: Int,
+        imageW: Int,
+        imageH: Int,
+        orientation: Int
+    ): Boolean {
+        if (thumbW <= 0 || thumbH <= 0 || imageW <= 0 || imageH <= 0) return false
+        val swapped = swapsDimensions(orientation)
+        val orientedThumbW = if (swapped) thumbH else thumbW
+        val orientedThumbH = if (swapped) thumbW else thumbH
+        val orientedImageW = if (swapped) imageH else imageW
+        val orientedImageH = if (swapped) imageW else imageH
+        val thumbRatio = orientedThumbW.toDouble() / orientedThumbH.toDouble()
+        val imageRatio = orientedImageW.toDouble() / orientedImageH.toDouble()
+        return kotlin.math.abs(thumbRatio - imageRatio) / imageRatio <= 0.02
+    }
+
+    internal fun isUsableEmbeddedThumbnail(
+        thumbW: Int,
+        thumbH: Int,
+        imageW: Int,
+        imageH: Int,
+        orientation: Int,
+        minShortSidePx: Int
+    ): Boolean =
+        embeddedAspectMatchesMain(thumbW, thumbH, imageW, imageH, orientation) &&
+            isThumbnailSharpEnough(thumbW, thumbH, minShortSidePx)
 
     fun decode(
         file: File,
         maxWidth: Int,
         maxHeight: Int,
         config: Bitmap.Config = Bitmap.Config.ARGB_8888,
-        maxPixels: Int = Int.MAX_VALUE
+        maxPixels: Int = Int.MAX_VALUE,
+        knownOrientation: Int? = null
     ): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
-        val orientation = try {
+        val orientation = knownOrientation ?: try {
             ExifInterface(file.absolutePath).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL

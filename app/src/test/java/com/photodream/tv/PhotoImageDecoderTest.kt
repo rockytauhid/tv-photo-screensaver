@@ -53,10 +53,61 @@ class PhotoImageDecoderTest {
     }
 
     @Test
-    fun embeddedThumbnailSharpnessChecksShortestSideAgainstTarget() {
-        assertFalse(PhotoImageDecoder.isThumbnailSharpEnough(160, 120, 260))
-        assertTrue(PhotoImageDecoder.isThumbnailSharpEnough(320, 260, 260))
-        assertFalse(PhotoImageDecoder.isThumbnailSharpEnough(0, 300, 260))
+    fun embeddedThumbnailValidationChecksSizeAspectRatioAndRotation() {
+        // Matching 4:3 aspect ratio and sharp enough.
+        assertTrue(
+            PhotoImageDecoder.isUsableEmbeddedThumbnail(
+                thumbW = 360,
+                thumbH = 270,
+                imageW = 4000,
+                imageH = 3000,
+                orientation = ExifInterface.ORIENTATION_NORMAL,
+                minShortSidePx = 260
+            )
+        )
+        // Too small (160x120 vs 260px target).
+        assertFalse(
+            PhotoImageDecoder.isUsableEmbeddedThumbnail(
+                thumbW = 160,
+                thumbH = 120,
+                imageW = 4000,
+                imageH = 3000,
+                orientation = ExifInterface.ORIENTATION_NORMAL,
+                minShortSidePx = 260
+            )
+        )
+        // Stale/cropped: 4:3 thumbnail on a 1:1 cropped main photo is rejected.
+        assertFalse(
+            PhotoImageDecoder.embeddedAspectMatchesMain(
+                thumbW = 320,
+                thumbH = 240,
+                imageW = 3000,
+                imageH = 3000,
+                orientation = ExifInterface.ORIENTATION_NORMAL
+            )
+        )
+        // Rotated 90° (orientation 6): unrotated 4:3 thumbnail matches unrotated 4:3 main image.
+        assertTrue(
+            PhotoImageDecoder.isUsableEmbeddedThumbnail(
+                thumbW = 360,
+                thumbH = 270,
+                imageW = 4000,
+                imageH = 3000,
+                orientation = ExifInterface.ORIENTATION_ROTATE_90,
+                minShortSidePx = 260
+            )
+        )
+        // Already pre-rotated 3:4 thumbnail with orientation 6 on 4:3 main image is rejected
+        // (would be double-rotated).
+        assertFalse(
+            PhotoImageDecoder.embeddedAspectMatchesMain(
+                thumbW = 270,
+                thumbH = 360,
+                imageW = 4000,
+                imageH = 3000,
+                orientation = ExifInterface.ORIENTATION_ROTATE_90
+            )
+        )
     }
 
     @Test
