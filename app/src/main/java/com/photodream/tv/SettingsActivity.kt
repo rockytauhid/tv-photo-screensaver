@@ -128,7 +128,7 @@ class SettingsActivity : Activity() {
             )
             textSize = 26f
             typeface = TvDesignTokens.fontLight
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(12) })
@@ -427,7 +427,7 @@ class SettingsActivity : Activity() {
             setColor(if (focused) TvDesignTokens.surfaceCard else TvDesignTokens.surfaceRow)
             setStroke(
                 if (focused) focusStrokePx() else dp(1),
-                if (focused) Color.WHITE else TvDesignTokens.borderSubtle
+                if (focused) TEXT_COLOR else TvDesignTokens.borderSubtle
             )
         }
 

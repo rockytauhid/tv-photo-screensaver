@@ -75,7 +75,7 @@ class FolderPickerActivity : Activity() {
             text = getString(R.string.folder_picker_title)
             textSize = 26f
             typeface = TvDesignTokens.fontLight
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         })
@@ -295,7 +295,7 @@ class FolderPickerActivity : Activity() {
         button.setTextColor(
             when {
                 !enabled -> DISABLED_TEXT_COLOR
-                hasFocus -> Color.WHITE
+                hasFocus -> TEXT_COLOR
                 else -> ROW_TEXT_COLOR
             }
         )
@@ -311,7 +311,7 @@ class FolderPickerActivity : Activity() {
                 }
             )
             if (hasFocus && enabled) {
-                setStroke(focusStrokePx(), Color.WHITE)
+                setStroke(focusStrokePx(), TEXT_COLOR)
             } else {
                 setStroke(dp(1), if (enabled) SUBTLE_BORDER_COLOR else Color.TRANSPARENT)
             }
@@ -376,7 +376,7 @@ class FolderPickerActivity : Activity() {
                 cornerRadius = dp(10).toFloat()
                 setColor(if (focused) FOCUSED_FILL_COLOR else ROW_FILL_COLOR)
                 if (focused) {
-                    setStroke(focusStrokePx(), Color.WHITE)
+                    setStroke(focusStrokePx(), TEXT_COLOR)
                 } else {
                     setStroke(dp(1), SUBTLE_BORDER_COLOR)
                 }
@@ -384,13 +384,13 @@ class FolderPickerActivity : Activity() {
             icon.imageTintList = ColorStateList.valueOf(
                 when {
                     isCurrent -> GOLD_COLOR
-                    focused -> Color.WHITE
+                    focused -> TEXT_COLOR
                     else -> SECONDARY_TEXT_COLOR
                 }
             )
-            nameView.setTextColor(if (focused) Color.WHITE else ROW_TEXT_COLOR)
+            nameView.setTextColor(if (focused) TEXT_COLOR else ROW_TEXT_COLOR)
             nameView.typeface = if (focused) TvDesignTokens.fontRegular else TvDesignTokens.fontLight
-            chevron.setTextColor(if (focused) Color.WHITE else MUTED_TEXT_COLOR)
+            chevron.setTextColor(if (focused) TEXT_COLOR else MUTED_TEXT_COLOR)
         }
 
         applyRowStyle(focused = false)

@@ -345,7 +345,7 @@ class GalleryActivity : Activity() {
             text = getString(R.string.app_name)
             textSize = 18f
             typeface = TvDesignTokens.fontLight
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
@@ -442,7 +442,7 @@ class GalleryActivity : Activity() {
 
         status = TextView(this).apply {
             textSize = 18f
-            setTextColor(0xFFBBBBBB.toInt())
+            setTextColor(MUTED_COLOR)
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
@@ -456,7 +456,7 @@ class GalleryActivity : Activity() {
         selectedDateLabel = TextView(this).apply {
             textSize = 15f
             typeface = TvDesignTokens.fontLight
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -464,7 +464,7 @@ class GalleryActivity : Activity() {
         selectedLocationLabel = TextView(this).apply {
             textSize = 15f
             typeface = TvDesignTokens.fontLight
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -1112,8 +1112,8 @@ class GalleryActivity : Activity() {
         view.setTextColor(
             when {
                 selected -> GOLD_COLOR
-                view.hasFocus() -> Color.WHITE
-                else -> 0xFFE0E0E0.toInt()
+                view.hasFocus() -> TEXT_COLOR
+                else -> MUTED_COLOR
             }
         )
         view.typeface = if (selected || view.hasFocus()) {
@@ -1149,7 +1149,7 @@ class GalleryActivity : Activity() {
             text = label
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(0xFFE0E0E0.toInt())
+            setTextColor(MUTED_COLOR)
             setPadding(dp(SHORTCUT_HORIZONTAL_PADDING_DP), dp(4), dp(SHORTCUT_HORIZONTAL_PADDING_DP), dp(4))
             minHeight = dp(34)
             isFocusable = true
@@ -1416,8 +1416,8 @@ class GalleryActivity : Activity() {
             val placeholder = TextView(this@GalleryActivity).apply {
                 gravity = Gravity.CENTER
                 textSize = 14f
-                setTextColor(0xFFBBBBBB.toInt())
-                setBackgroundColor(0xFF252525.toInt())
+                setTextColor(MUTED_COLOR)
+                setBackgroundColor(TILE_COLOR)
                 isFocusable = false
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
@@ -1426,7 +1426,7 @@ class GalleryActivity : Activity() {
             val focusBorder = View(this@GalleryActivity).apply {
                 background = GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
-                    setStroke(focusStrokePx(), Color.WHITE)
+                    setStroke(focusStrokePx(), TEXT_COLOR)
                 }
                 visibility = View.GONE
                 isFocusable = false

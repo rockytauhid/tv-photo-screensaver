@@ -32,7 +32,14 @@ import android.widget.TextView
 import android.widget.Toast
 
 /** Gold is reserved for state: a favorite, an enabled option, the current year or month. */
-internal const val GOLD_COLOR = 0xFFFFC107.toInt()
+internal const val GOLD_COLOR = 0xFFF5B942.toInt()
+internal const val INK_COLOR = 0xFF0E1220.toInt()
+internal const val PANEL_COLOR = 0xD9171C2E.toInt()
+internal const val TILE_COLOR = 0xFF1F2540.toInt()
+internal const val TEXT_COLOR = 0xFFF2F4FA.toInt()
+internal const val MUTED_COLOR = 0xFFA9B0C6.toInt()
+internal const val DISABLED_COLOR = 0xFF5B6280.toInt()
+internal const val TEAL_COLOR = 0xFF3FC1AD.toInt()
 
 /** Uniform TV vertical safe-area margin (bottom) used across gallery and preview. */
 internal const val TV_EDGE_MARGIN_DP = 20
@@ -43,22 +50,22 @@ internal const val TV_HEADER_TOP_MARGIN_DP = 14
 /** Uniform TV horizontal safe-area margin (left & right), aligned with the gallery Year text. */
 internal const val TV_HORIZONTAL_MARGIN_DP = 30
 
-/** Centralized dark TV color palette shared across all screens and panels. */
+/** Centralized ink-blue dark TV color palette shared across all screens and panels. */
 internal object TvDesignTokens {
-    val background = 0xFF101010.toInt()
-    val panelBackground = 0xE6161616.toInt()
-    val optionsPanelBackground = 0xD9222222.toInt()
+    val background = INK_COLOR
+    val panelBackground = PANEL_COLOR
+    val optionsPanelBackground = PANEL_COLOR
     val overlayScrim = 0xB8000000.toInt()
-    val surfaceRow = 0xFF1A1A1A.toInt()
-    val surfaceCard = 0xFF1E1E1E.toInt()
-    val surfaceFocused = 0xFF333333.toInt()
-    val surfaceDisabled = 0xFF161616.toInt()
-    val borderSubtle = 0xFF303030.toInt()
-    val divider = 0xFF2B2B2B.toInt()
-    val textPrimary = 0xFFEBEBEB.toInt()
-    val textSecondary = 0xFFBBBBBB.toInt()
-    val textMuted = 0xFF9E9E9E.toInt()
-    val textDisabled = 0xFF666666.toInt()
+    val surfaceRow = 0xFF14192B.toInt()
+    val surfaceCard = TILE_COLOR
+    val surfaceFocused = 0xFF2B3354.toInt()
+    val surfaceDisabled = 0xFF121626.toInt()
+    val borderSubtle = 0xFF2D3554.toInt()
+    val divider = 0xFF252C47.toInt()
+    val textPrimary = TEXT_COLOR
+    val textSecondary = MUTED_COLOR
+    val textMuted = MUTED_COLOR
+    val textDisabled = DISABLED_COLOR
 
     val fontLight: Typeface by lazy { Typeface.create("sans-serif-light", Typeface.NORMAL) }
     val fontRegular: Typeface by lazy { Typeface.create("sans-serif", Typeface.NORMAL) }
@@ -92,7 +99,7 @@ internal class RightOptionsOverlay(context: Context) {
             text = context.getString(R.string.options_title)
             textSize = 20f
             gravity = Gravity.CENTER_VERTICAL
-            setTextColor(Color.WHITE)
+            setTextColor(TEXT_COLOR)
             setPadding(0, 0, 0, context.dp(12))
         }, LinearLayout.LayoutParams(-1, -2))
         view.addView(
@@ -161,7 +168,7 @@ internal fun Context.createOptionText(
         setTextColor(
             ColorStateList(
                 arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-                intArrayOf(TvDesignTokens.textDisabled, Color.WHITE)
+                intArrayOf(TvDesignTokens.textDisabled, TEXT_COLOR)
             )
         )
         setPadding(ctx.dp(16), ctx.dp(8), ctx.dp(16), ctx.dp(8))
@@ -225,7 +232,7 @@ private fun styleCardOption(
     button.setTextColor(
         when {
             !enabled -> TvDesignTokens.textDisabled
-            hasFocus -> Color.WHITE
+            hasFocus -> TEXT_COLOR
             else -> TvDesignTokens.textPrimary
         }
     )
@@ -241,7 +248,7 @@ private fun styleCardOption(
             }
         )
         when {
-            hasFocus && enabled -> setStroke(context.focusStrokePx(), Color.WHITE)
+            hasFocus && enabled -> setStroke(context.focusStrokePx(), TEXT_COLOR)
             enabled -> setStroke(context.dp(1), TvDesignTokens.borderSubtle)
             else -> setStroke(0, Color.TRANSPARENT)
         }
@@ -283,7 +290,7 @@ internal fun Context.createIconButton(
         minimumHeight = ctx.dp(44)
         isFocusable = true
         isFocusableInTouchMode = true
-        imageTintList = ColorStateList.valueOf(Color.WHITE)
+        imageTintList = ColorStateList.valueOf(TEXT_COLOR)
         setOnFocusChangeListener { v, hasFocus ->
             v.background = if (hasFocus) ctx.focusRing(circle = true) else null
         }
@@ -292,7 +299,7 @@ internal fun Context.createIconButton(
 }
 
 internal fun ImageButton.setIconActive(active: Boolean) {
-    imageTintList = ColorStateList.valueOf(if (active) GOLD_COLOR else Color.WHITE)
+    imageTintList = ColorStateList.valueOf(if (active) GOLD_COLOR else TEXT_COLOR)
 }
 
 internal fun Context.focusStrokePx(): Int = dp(1).coerceAtLeast(1)
@@ -303,7 +310,7 @@ internal fun Context.focusRing(circle: Boolean): GradientDrawable =
         // Larger than half the height: the drawable clamps it, which gives a pill shape.
         if (!circle) cornerRadius = dp(100).toFloat()
         setColor(Color.TRANSPARENT)
-        setStroke(focusStrokePx(), Color.WHITE)
+        setStroke(focusStrokePx(), TEXT_COLOR)
     }
 
 internal fun Activity.openScreensaverSettings() {
@@ -329,7 +336,7 @@ internal class SlideshowStage(context: Context, handler: Handler) {
     val dateLabel: TextView = footerLabel(context, Gravity.START)
     val locationLabel: TextView = footerLabel(context, Gravity.END)
     val status: TextView = TextView(context).apply {
-        setTextColor(0xFFBBBBBB.toInt())
+        setTextColor(MUTED_COLOR)
         textSize = 22f
         gravity = Gravity.CENTER
     }

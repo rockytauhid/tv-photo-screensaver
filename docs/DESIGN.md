@@ -226,6 +226,22 @@ Keep these intentional behaviours intact when refactoring or optimizing:
 
 ## Local implementation notes
 
+- **App icon, TV banner & ink-blue colour palette:**
+  - Adaptive launcher icon (`mipmap-anydpi-v26/ic_launcher.xml`, `ic_launcher_background.xml`,
+    `ic_launcher_foreground.xml`): fanned stack of photos with a dusk sky gradient, gold crescent moon, and teal hills
+    over a deep ink-blue gradient, kept inside the 66×66 adaptive safe zone (no monochrome layer).
+  - Android TV Leanback banner (`drawable-xhdpi/banner.png`, 640×360, wired via `android:banner="@drawable/banner"` on
+    `GalleryActivity`).
+  - Ink-blue dark UI palette defined in `TvScreenUi.kt` (screensaver/slideshow/preview photo backgrounds stay pure
+    `Color.BLACK` and photo overlays stay white with drop shadows):
+    - `INK_COLOR` (`0xFF0E1220`): screen and cold-start launch background (`@color/app_background`)
+    - `PANEL_COLOR` (`0xD9171C2E`): Settings and Options panels
+    - `TILE_COLOR` (`0xFF1F2540`): thumbnail/card surfaces
+    - `TEXT_COLOR` (`0xFFF2F4FA`): primary text and focus rings
+    - `MUTED_COLOR` (`0xFFA9B0C6`): labels, status text, inactive shortcuts
+    - `DISABLED_COLOR` (`0xFF5B6280`): disabled controls
+    - `GOLD_COLOR` (`0xFFF5B942`): reserved strictly for state (favorite, enabled toggle, current year/month)
+    - `TEAL_COLOR` (`0xFF3FC1AD`): rare accent token
 - The settings app requests photo-read permission and includes a D-pad folder browser rooted at `/storage`, with
   `Internal Storage`, `Internal Pictures`, and mounted USB volumes (skipping unreadable `/storage/emulated` and
   `/storage/self` entries), high-contrast focus borders, direct subfolder/photo counts, a gold `Current` badge on the
