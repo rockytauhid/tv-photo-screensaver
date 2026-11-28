@@ -54,7 +54,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\gradlew.bat --no-daemon testDebugUnitTest assembleRelease
 ```
 
-The release APK is written to `app\build\outputs\apk\release\app-release.apk`. See [docs/DEPLOY.md](docs/DEPLOY.md) for sideloading over ADB with the `cleanyourtv` tools and closing ADB afterwards.
+The release APK is written to `app\build\outputs\apk\release\app-release.apk`. See [docs/DEPLOY.md](docs/DEPLOY.md) for sideloading over ADB and closing ADB afterwards.
 
 ## Project Layout
 
@@ -87,7 +87,7 @@ test-data/sample-photos/    30 generated sample photo fixtures
 
 | Doc | Contents |
 |---|---|
-| [docs/CONTEXT.md](docs/CONTEXT.md) | Target TV specs, `DreamService` notes, `cleanyourtv` rules, build environment |
+| [docs/CONTEXT.md](docs/CONTEXT.md) | Target TV specs, `DreamService` notes, safety rules, build environment |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture, memory budget, local/LAN/cloud source designs, milestones |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Build, sideload, select/undo screensaver, close ADB safely |
 | [AGENTS.md](AGENTS.md) | Rules and verification checklist for coding agents |
@@ -98,4 +98,4 @@ Photo Dream is free software under the GNU General Public License, version 3 or 
 
 Copyright (C) 2026 Rocky Adam Tauhid <rockytauhid@gmail.com>
 
-This program comes with ABSOLUTELY NO WARRANTY. Anyone who distributes it or a program based on it must do so under the same licence and provide the source code. Code copied from cleanyourtv is MIT licensed, which is compatible with the GPL; keep its copyright notice. The AndroidX and Leanback libraries are Apache-2.0, which is also compatible with GPL-3.0.
+This program comes with ABSOLUTELY NO WARRANTY. Anyone who distributes it or a program based on it must do so under the same licence and provide the source code. The AndroidX and Leanback libraries are Apache-2.0, which is compatible with GPL-3.0.

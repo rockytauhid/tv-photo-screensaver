@@ -23,6 +23,7 @@ import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -38,7 +39,7 @@ class SettingsActivity : Activity() {
     private var previewOnly = false
     private var previewPhotoPath: String? = null
     private var detailsContainer: LinearLayout? = null
-    private lateinit var closeButton: TextView
+    private lateinit var closeButton: ImageButton
     private lateinit var folderLabel: TextView
     private lateinit var folderOption: TextView
     private lateinit var screensaverOption: TextView
@@ -131,10 +132,13 @@ class SettingsActivity : Activity() {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(12) })
-        closeButton = createCardOption(getString(R.string.settings_close), 15f, 42, pill = true) {
+        closeButton = createIconButton(
+            R.drawable.ic_close,
+            getString(R.string.settings_close)
+        ) {
             finish()
         }
-        header.addView(closeButton, LinearLayout.LayoutParams(-2, dp(42)))
+        header.addView(closeButton, LinearLayout.LayoutParams(dp(44), dp(44)))
         content.addView(header, LinearLayout.LayoutParams(-1, -2).apply {
             bottomMargin = dp(16)
         })

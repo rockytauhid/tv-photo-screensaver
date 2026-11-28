@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.LruCache
 import android.view.Gravity
 import android.view.KeyEvent
@@ -31,8 +32,8 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.leanback.widget.HorizontalGridView
 import androidx.leanback.widget.OnChildViewHolderSelectedListener
 import androidx.recyclerview.widget.RecyclerView
@@ -62,10 +63,6 @@ class GalleryActivity : Activity() {
     private lateinit var screensaverOptionButton: TextView
     private lateinit var shortcutsScroll: HorizontalScrollView
     private lateinit var dateShortcuts: LinearLayout
-    private lateinit var leftPeek: ImageView
-    private lateinit var rightPeek: ImageView
-    private lateinit var leftPeekHolder: GalleryHolder
-    private lateinit var rightPeekHolder: GalleryHolder
     private lateinit var galleryFrame: FrameLayout
     private lateinit var status: TextView
     private lateinit var adapter: GalleryAdapter
@@ -108,6 +105,8 @@ class GalleryActivity : Activity() {
     private var waitingForStorage = false
     private var storageRetryCount = 0
     private var storageRetryRunnable: Runnable? = null
+    private var lastBackPressMillis = 0L
+    private var exitToast: Toast? = null
     private var mediaReceiverRegistered = false
     private val mediaMountReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -150,12 +149,10 @@ class GalleryActivity : Activity() {
                 ) {
                     if (position in 0 until adapter.itemCount) {
                         adapter.setHighlightedPosition(position)
-                        updateEdgePreviews(position)
                         updateSelectedMetadata(position)
                         onPhotoHighlighted(position)
                     } else {
                         adapter.setHighlightedPosition(-1)
-                        updateEdgePreviews(-1)
                     }
                 }
             }
@@ -166,15 +163,6 @@ class GalleryActivity : Activity() {
             )
             if (hasFocus) updateSelectedMetadata(grid.selectedPosition)
         }
-        grid.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    grid.post {
-                        updateEdgePreviews(grid.selectedPosition)
-                    }
-                }
-            }
-        })
         loadPhotos()
     }
 
@@ -267,6 +255,8 @@ class GalleryActivity : Activity() {
     }
 
     override fun onDestroy() {
+        exitToast?.cancel()
+        exitToast = null
         cancelStorageRetry()
         unregisterMediaMountReceiver()
         if (::preferences.isInitialized) {
@@ -308,6 +298,25 @@ class GalleryActivity : Activity() {
             }
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (optionsOverlay.isVisible) {
+            closeOptions()
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastBackPressMillis <= EXIT_CONFIRM_WINDOW_MS) {
+            exitToast?.cancel()
+            exitToast = null
+            super.onBackPressed()
+            return
+        }
+        lastBackPressMillis = now
+        exitToast?.cancel()
+        exitToast = Toast.makeText(this, R.string.press_back_again_to_exit, Toast.LENGTH_SHORT)
+            .also { it.show() }
     }
 
     private fun createContentView(): View {
@@ -419,22 +428,6 @@ class GalleryActivity : Activity() {
             visibility = View.INVISIBLE
         }
         galleryFrame.addView(grid, FrameLayout.LayoutParams(-1, -1))
-        leftPeek = createPeekImage()
-        rightPeek = createPeekImage()
-        leftPeekHolder = createPeekHolder(leftPeek)
-        rightPeekHolder = createPeekHolder(rightPeek)
-        galleryFrame.addView(
-            leftPeek,
-            FrameLayout.LayoutParams(dp(24), dp(90), Gravity.TOP or Gravity.LEFT).apply {
-                topMargin = dp(GRID_VERTICAL_PADDING_DP)
-            }
-        )
-        galleryFrame.addView(
-            rightPeek,
-            FrameLayout.LayoutParams(dp(24), dp(90), Gravity.TOP or Gravity.RIGHT).apply {
-                topMargin = dp(GRID_VERTICAL_PADDING_DP)
-            }
-        )
         root.addView(
             galleryFrame,
             FrameLayout.LayoutParams(-1, dp(gridHeightDp), Gravity.CENTER)
@@ -496,20 +489,6 @@ class GalleryActivity : Activity() {
         root.addView(optionsOverlay.view, FrameLayout.LayoutParams(-1, -1))
         return root
     }
-
-    private fun createPeekImage(): ImageView =
-        ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(0xFF252525.toInt())
-            alpha = 0.9f
-            isFocusable = false
-            isClickable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            visibility = View.GONE
-        }
-
-    private fun createPeekHolder(image: ImageView): GalleryHolder =
-        GalleryHolder(image, image, TextView(this), null)
 
     private fun openSettings() {
         startActivityForResult(Intent(this, SettingsActivity::class.java), REQUEST_SETTINGS)
@@ -578,30 +557,6 @@ class GalleryActivity : Activity() {
             .takeIf { it in 0 until adapter.itemCount }
             ?.let { adapter.getItem(it).absolutePath }
 
-    private fun updateEdgePreviews(selectedPosition: Int) {
-        val count = adapter.itemCount
-        if (count < 2 || selectedPosition !in 0 until count) {
-            adapter.bindEdgeThumbnail(-1, leftPeekHolder)
-            adapter.bindEdgeThumbnail(-1, rightPeekHolder)
-            leftPeek.visibility = View.GONE
-            rightPeek.visibility = View.GONE
-            return
-        }
-
-        val visiblePositions = (0 until grid.childCount)
-            .map { grid.getChildAdapterPosition(grid.getChildAt(it)) }
-            .filter { it >= 0 }
-        val previous = selectedPosition - 1
-        val next = selectedPosition + 1
-        val showLeft = previous >= 0 && previous !in visiblePositions
-        val showRight = next < count && next !in visiblePositions
-
-        leftPeek.visibility = if (showLeft) View.VISIBLE else View.GONE
-        rightPeek.visibility = if (showRight) View.VISIBLE else View.GONE
-        adapter.bindEdgeThumbnail(if (showLeft) previous else -1, leftPeekHolder)
-        adapter.bindEdgeThumbnail(if (showRight) next else -1, rightPeekHolder)
-    }
-
     private fun loadPhotos() {
         val generation = ++scanGeneration
         scanExecutor?.shutdownNow()
@@ -618,7 +573,6 @@ class GalleryActivity : Activity() {
         expandedYear = null
         photoFolderPath = null
         adapter.setPhotos(emptyList())
-        updateEdgePreviews(-1)
         startSlideshowButton.isEnabled = false
         updateFavoritesFilterButton()
         dateShortcuts.removeAllViews()
@@ -671,7 +625,12 @@ class GalleryActivity : Activity() {
             0L,
             TimeUnit.MILLISECONDS,
             ArrayBlockingQueue(1),
-            ThreadFactory { runnable -> Thread(runnable, "photo-index").apply { isDaemon = true } }
+            ThreadFactory { runnable ->
+                Thread(runnable, "photo-index").apply {
+                    isDaemon = true
+                    priority = Thread.MIN_PRIORITY
+                }
+            }
         )
         scanExecutor?.execute {
             if (cachedRefs.isNotEmpty()) {
@@ -689,7 +648,7 @@ class GalleryActivity : Activity() {
             }
 
             // Fresh folder: list files quickly without EXIF and show the gallery right away,
-            // then read full EXIF capture dates in the background.
+            // then let visible thumbnails decode first before reading full EXIF in the background.
             val fastFiles = PhotoFiles.listImages(File(folderPath))
             val fastRefs = fastFiles.map { file ->
                 val modified = file.lastModified()
@@ -708,7 +667,18 @@ class GalleryActivity : Activity() {
             }
             if (fastFiles.isEmpty() || generation != scanGeneration) return@execute
 
-            val refreshed = PhotoRepository.safeRefresh(source, emptyList())
+            try {
+                Thread.sleep(FRESH_FOLDER_EXIF_DELAY_MS)
+            } catch (_: InterruptedException) {
+                return@execute
+            }
+            if (generation != scanGeneration) return@execute
+
+            val refreshed = try {
+                source.refreshFromFiles(emptyList(), fastFiles)
+            } catch (_: Exception) {
+                return@execute
+            }
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
                 applyLoadedRefs(
@@ -848,7 +818,6 @@ class GalleryActivity : Activity() {
                 grid.requestFocus()
             }
             adapter.setHighlightedPosition(index)
-            updateEdgePreviews(index)
             updateSelectedMetadata(index)
         }
     }
@@ -980,7 +949,6 @@ class GalleryActivity : Activity() {
         if (ordered.isEmpty()) {
             rebuildDateShortcuts()
             updateSelectedMetadata(-1)
-            updateEdgePreviews(-1)
         } else {
             jumpTo(index, null)
         }
@@ -1000,7 +968,6 @@ class GalleryActivity : Activity() {
         rebuildDateShortcuts(focusTag)
         grid.setSelectedPosition(position)
         updateSelectedMetadata(position)
-        updateEdgePreviews(position)
     }
 
     /** Follows the highlighted photo: the shortcuts select its year and month and open its year. */
@@ -1394,39 +1361,6 @@ class GalleryActivity : Activity() {
             }
         }
 
-        fun bindEdgeThumbnail(position: Int, holder: GalleryHolder) {
-            val photo = photos.getOrNull(position)
-            if (photo == null) {
-                cancel(holder)
-                holder.boundKey = null
-                holder.image.tag = null
-                holder.image.setImageDrawable(null)
-                return
-            }
-
-            val key = photo.absolutePath
-            if (holder.boundKey != key) {
-                cancel(holder)
-                holder.boundKey = key
-                holder.image.tag = key
-                holder.image.setImageDrawable(null)
-            }
-            val cached = thumbnailCache.get(key)
-            if (cached != null) {
-                cancel(holder)
-                holder.image.setImageBitmap(cached)
-            } else if (hasFailedThumbnail(key)) {
-                cancel(holder)
-                holder.image.setImageDrawable(null)
-            } else if (holder.taskKey != key) {
-                holder.image.setImageDrawable(null)
-                val task = ThumbnailTask(key, photo, holder)
-                holder.task = task
-                holder.taskKey = key
-                thumbnailExecutor.execute(task)
-            }
-        }
-
         fun close() {
             closed = true
             thumbnailExecutor.shutdownNow().forEach { (it as? CancellableGalleryTask)?.cancel() }
@@ -1519,7 +1453,7 @@ class GalleryActivity : Activity() {
                 }
                 if (cachedBitmap != null) return cachedBitmap
             }
-            val decoded = PhotoImageDecoder.decode(
+            val decoded = PhotoImageDecoder.decodeThumbnail(
                 file,
                 targetPx,
                 targetPx,
@@ -1626,6 +1560,8 @@ class GalleryActivity : Activity() {
         private const val REQUEST_STORAGE_PERMISSION = 4
         private const val MAX_STORAGE_WAIT_RETRIES = 15
         private const val STORAGE_WAIT_RETRY_MS = 2000L
+        private const val FRESH_FOLDER_EXIF_DELAY_MS = 1500L
+        private const val EXIT_CONFIRM_WINDOW_MS = 2000L
         private const val MAX_FAILED_THUMBNAILS = 128
         private const val MAX_LOADING_SCREEN_MS = 3000L
         private const val INITIAL_WARM_THUMBNAIL_COUNT = 24

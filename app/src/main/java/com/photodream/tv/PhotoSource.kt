@@ -50,10 +50,13 @@ internal class LocalPhotoSource(
         if (!isFolderAvailable(root)) {
             return PhotoSourceRefreshResult(cached, changed = false)
         }
+        return refreshFromFiles(cached, PhotoFiles.listImages(root))
+    }
+
+    fun refreshFromFiles(cached: List<PhotoRef>, currentFiles: List<File>): PhotoSourceRefreshResult {
         val cachedIndexed = cached.map {
             IndexedPhoto(it.id, it.lastModified, it.size, it.captureTimeMillis)
         }
-        val currentFiles = PhotoFiles.listImages(root)
         val result = PhotoIndex.reconcile(cachedIndexed, currentFiles, captureTime)
         if (result.changed || !indexFile.isFile) {
             PhotoIndex.save(indexFile, root.absolutePath, result.entries)

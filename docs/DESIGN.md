@@ -69,7 +69,7 @@ interface PhotoSource {
   Needs `READ_EXTERNAL_STORAGE` (a runtime permission from API 23). A `DreamService` cannot show the prompt, so
   ask in `SettingsActivity`. There is no scoped storage before Android 10, so plain `java.io.File` works.
 - Own folder browser in `SettingsActivity`, D-pad only (no SAF picker, see the table above).
-- Watch out: some Sony boards cut power to a USB port while USB debugging is on (cleanyourtv `PROMPT.md`). Test the
+- Watch out: some Sony boards cut power to a USB port while USB debugging is on. Test the
   USB path with debugging off, via `logcat` over a different route or by checking the slideshow itself.
 
 ### 2. Local network (Immich, SMB, WebDAV, Plex)
@@ -108,7 +108,7 @@ screen, so sign in from `SettingsActivity` and keep the refresh token.
 | Google Drive | Device flow only allows narrow scopes (believed: `drive.file`, `drive.appdata`, not `drive.readonly`) | May mean the person must pick or share the folder through the app, or use a different route. Needs research before promising anything. |
 | Google Photos | Library API stopped returning the whole library to apps in 2025 (believed); a Picker API replaced it | Probably not a good source. The Google Home ambient route is also missing on this TV. Treat as out of scope unless research says otherwise. |
 | Plex | Already installed on the TV; a Plex Media Server serves photo libraries over HTTP with a token | A good "cloud-like" source for people who run Plex. |
-| Immich, Nextcloud, WebDAV clouds | Token or app password | Immich already has a screensaver in the cleanyourtv showcase (Homelab companion). |
+| Immich, Nextcloud, WebDAV clouds | Token or app password | Self-hosted LAN photo servers; Immich is first in the LAN roadmap. |
 
 **Fallback that removes most of the cloud work:** the person syncs the cloud folder to a NAS or a USB drive with a
 tool such as rclone (on a PC, NAS or Raspberry Pi), and the app only needs local and SMB/WebDAV. Decide early
@@ -120,7 +120,7 @@ Rules for cloud code:
 - Store refresh tokens in app-private storage, encrypted with an Android Keystore key (API 23+). Never log tokens,
   never put a client secret in the repo (public clients do not need one; `secrets.properties` is git-ignored).
 - No analytics SDKs, no Firebase, no Google Play Services dependency (this TV may not have the right version, and the
-  cleanyourtv rule is "no telemetry").
+  app has strict zero-telemetry rules).
 - Refresh on a schedule only while the dream is running or from the settings screen.
 
 ## Performance and memory
@@ -131,7 +131,7 @@ Rules for cloud code:
 - Reuse bitmaps with `inBitmap` where possible to reduce garbage collection pauses.
 - One download/decode thread, one UI thread, no thread pools that grow.
 - Transitions: alpha crossfade on two `ImageView`s. The Ken Burns zoom is a matrix animation; test it on the TV
-  because the GPU is weak. cleanyourtv rules out blur and video on 1 GB sets.
+  because the GPU is weak. Avoid blur and video on 1–1.5 GB TVs.
 - Burn-in protection is not a worry on an LCD, but dim the clock overlay if one is added.
 - Avoid wake locks outside the dream. The dream itself keeps the screen on.
 
@@ -145,8 +145,7 @@ Rules for cloud code:
   its settings panel are then available from Home.
 - Distribution: a sideloaded APK over ADB, debug-signed, like the launcher. Publishing on Google Play is a separate
   decision (it needs a developer account, a privacy policy and cloud API verification).
-- Licence: GPL-3.0-or-later, copyright Rocky Adam Tauhid. If cleanyourtv code is copied (for example
-  `ClockDream.java`), keep its MIT notice; MIT is compatible with the GPL.
+- Licence: GPL-3.0-or-later, copyright Rocky Adam Tauhid.
 
 ## Testing
 
@@ -180,6 +179,46 @@ Rules for cloud code:
   4. **Online clouds** (OneDrive, Google Drive, iCloud, Dropbox — later, one at a time).
 - Revised milestone order: 0 skeleton, 1 local slideshow, 2 settings & gallery, 3 Local network (Immich & SMB),
   4 Online clouds, 5 polish.
+
+## Intentional behaviours & performance decisions
+
+Keep these intentional behaviours intact when refactoring or optimizing:
+
+- **Two-phase fresh-folder loading + deferred EXIF scan (`GalleryActivity`, `LocalPhotoSource.refreshFromFiles`):**
+  When opening an uncached folder for the first time, files are listed immediately using `lastModified` so the gallery
+  appears right away. The full EXIF capture-date pass runs on a `Thread.MIN_PRIORITY` worker after a `1.5s` delay and
+  reuses the already-scanned file list (avoiding a second directory walk), so the first visible screen of thumbnails
+  gets full USB/HDD I/O bandwidth without contention.
+- **Embedded EXIF thumbnails first (`PhotoImageDecoder.decodeThumbnail`):**
+  Gallery tiles prefer the embedded EXIF JPEG thumbnail (~20 KB in the file header) when its shortest side is at least
+  `120px`, applying EXIF orientation and falling back to sampled full JPEG decoding only when absent or too small. This
+  dramatically speeds up initial gallery loading on USB drives and external HDDs while keeping heap usage tiny.
+- **USB / external HDD sleep & remount recovery (`LocalPhotoSource.isFolderAvailable`, `GalleryActivity`, `PhotoPreviewActivity`):**
+  External USB hard drives often lose power during TV sleep and take 2–10 seconds to spin up and remount on wake.
+  `LocalPhotoSource.refresh` never wipes `photo_index.tsv` when the folder is temporarily unmounted; `GalleryActivity`
+  registers a foreground-only `ACTION_MEDIA_MOUNTED` receiver while open, shows `"Waiting for storage drive…"` and
+  retries every 2s (up to 30s) while spinning up, and `PhotoPreviewActivity` retries up to 5×1.5s while keeping the
+  `"Loading..."` wave animation active if a photo isn't readable yet on wake.
+- **Press Back again to exit (`GalleryActivity`):**
+  Pressing Back on the main gallery shows a `"Press Back again to exit"` toast and requires a second Back press within
+  2 seconds to exit, preventing accidental exits when backing out of Preview or Settings.
+- **Dark icon-only cold-start splash (`LaunchTheme`, `splash_background.xml`):**
+  `GalleryActivity` uses `LaunchTheme` (`#101010` + centered `72dp` app icon, `windowNoTitle = true`) and switches to
+  `AppTheme` in `onCreate`, eliminating Android's default white window / black title bar flash on cold start.
+- **Live Settings updates (`GalleryActivity`, `SettingsActivity`):**
+  `GalleryActivity` observes `SharedPreferences` changes while open so choosing **Use this folder** populates the
+  gallery immediately behind the semi-transparent Settings panel, and toggling date/location updates live. Storage
+  permission is prompted on startup and when selecting **Choose photo folder** (no separate "Photo access allowed" row).
+- **Soft edge scrims for bright photos (`TvScreenUi.createEdgeScrim`):**
+  Preview, Slideshow, and `PhotoDream` place subtle top/bottom black-to-transparent gradient scrims behind overlays
+  plus an `8px` drop shadow so white clock, date, location, `Paused`, and action icons stay legible over bright/white
+  photos while remaining virtually invisible over dark photos.
+- **No edge-peek slivers in the 3-row grid:**
+  The 3-row `HorizontalGridView` naturally peeks the next column on the right edge (`TARGET_VISIBLE_COLUMNS = 7.75`);
+  do not reintroduce separate edge-peek `ImageView` overlays.
+- **Preview Photo Details (`PhotoMetadata.readDetails`, `SettingsActivity`):**
+  Opening Settings from Preview reads EXIF + header-only dimensions (`inJustDecodeBounds`) and optional `Geocoder`
+  location off the main thread and renders a D-pad-scrollable **Photo details** card (omitting empty fields).
 
 ## Local implementation notes
 

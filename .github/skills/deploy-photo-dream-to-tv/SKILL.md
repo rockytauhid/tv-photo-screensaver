@@ -20,7 +20,7 @@ Use this workflow only for the user's own TV, with their explicit authorization 
 ## Procedure
 
 1. Read the repository's `AGENTS.md`, `README.md`, `docs/CONTEXT.md`, and `docs/DEPLOY.md`. Follow their TV-specific safeguards and use their supported Android/JDK versions.
-2. Confirm the user wants this app installed on their own TV and obtain the exact TV host/IP from them. If the `cleanyourtv` tools path is unavailable, ask for its location; do not search the network or guess a filesystem path.
+2. Confirm the user wants this app installed on their own TV and obtain the exact TV host/IP from them. If a local ADB helper tools path is used and unavailable, ask for its location; do not search the network or guess a filesystem path.
 3. Build the release APK from the repository root:
 
    ```powershell
@@ -32,10 +32,10 @@ Use this workflow only for the user's own TV, with their explicit authorization 
    If the build or tests fail, stop before deployment and report the result.
 
 4. With the user physically present, have them enable USB and network/ADB debugging on the TV and approve this computer on the TV. Do not attempt to enable debugging or approve a prompt through ADB.
-5. In the current PowerShell process only, configure the user-provided host and the already-existing `cleanyourtv` tool path. Do not persist these values:
+5. In the current PowerShell process only, configure the user-provided host and the local ADB helper tool path. Do not persist these values:
 
    ```powershell
-   $tools = '<cleanyourtv clone>\tools'
+   $tools = '<adb-tools-path>'
    $py = "$tools\venv\Scripts\python.exe"
    $env:TV_HOST = '<user-provided TV host>'
    ```

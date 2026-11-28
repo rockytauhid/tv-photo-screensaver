@@ -25,7 +25,6 @@ storage. Kotlin (standard library only until a dependency is justified), `minSdk
   `shots/` and `work/` are git-ignored; keep them that way.
 - **Do not add dependencies** without writing down in `docs/DESIGN.md` what they cost (APK size, heap, licence) and
   why a hand-written client would not do. Avoid Google Play Services.
-- **Do not edit the cleanyourtv repository** from here. It is a reference at `<cleanyourtv clone>`.
 - **Slideshow and screensaver visual parity:** manual slideshow mode (`SlideshowActivity`) and the system screensaver
   (`PhotoDream`) must look visually identical (same top-right clock, footer typography/shadows/margins, and
   transitions). Keep their layout and transition logic shared via `SlideshowStage`.

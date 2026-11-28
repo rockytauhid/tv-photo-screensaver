@@ -97,6 +97,47 @@ internal object PhotoImageDecoder {
         }
     }
 
+    /**
+     * Fast thumbnail decoder for gallery tiles: prefers the embedded EXIF thumbnail (~20 KB) when
+     * it is sharp enough, falling back to full sampled [decode] when absent or too small.
+     */
+    fun decodeThumbnail(
+        file: File,
+        maxWidth: Int,
+        maxHeight: Int,
+        config: Bitmap.Config = Bitmap.Config.RGB_565
+    ): Bitmap? {
+        val exif = try {
+            ExifInterface(file.absolutePath)
+        } catch (_: IOException) {
+            null
+        }
+        val embedded = exif?.thumbnailBytes
+        if (embedded != null && embedded.isNotEmpty()) {
+            val thumb = try {
+                BitmapFactory.decodeByteArray(
+                    embedded,
+                    0,
+                    embedded.size,
+                    BitmapFactory.Options().apply { inPreferredConfig = config }
+                )
+            } catch (_: OutOfMemoryError) {
+                null
+            }
+            if (thumb != null) {
+                if (minOf(thumb.width, thumb.height) >= MIN_EXIF_THUMBNAIL_PX) {
+                    val orientation = exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                    return applyOrientation(thumb, orientation)
+                }
+                thumb.recycle()
+            }
+        }
+        return decode(file, maxWidth, maxHeight, config)
+    }
+
     fun decode(
         file: File,
         maxWidth: Int,
@@ -132,6 +173,10 @@ internal object PhotoImageDecoder {
             null
         } ?: return null
 
+        return applyOrientation(bitmap, orientation)
+    }
+
+    private fun applyOrientation(bitmap: Bitmap, orientation: Int): Bitmap? {
         val transform = orientationTransform(orientation) ?: return bitmap
         val matrix = Matrix().apply {
             if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
@@ -150,6 +195,8 @@ internal object PhotoImageDecoder {
         if (transformed !== bitmap) bitmap.recycle()
         return transformed
     }
+
+    private const val MIN_EXIF_THUMBNAIL_PX = 120
 
     internal data class OrientationTransform(
         val rotationDegrees: Float = 0f,

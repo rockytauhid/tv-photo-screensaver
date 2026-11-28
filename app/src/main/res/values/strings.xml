@@ -31,6 +31,7 @@
     <string name="gallery_no_folder">Choose a photo folder in settings first.</string>
     <string name="gallery_no_photos">No supported photos found in this folder.</string>
     <string name="gallery_waiting_for_storage">Waiting for storage drive…</string>
+    <string name="press_back_again_to_exit">Press Back again to exit</string>
     <string name="current_folder">Photo folder: %1$s</string>
     <string name="no_folder_selected">not selected</string>
     <string name="grant_storage_permission">Allow photo access</string>
