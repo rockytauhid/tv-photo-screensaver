@@ -10,8 +10,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.SpannableString
 import android.text.Spanned
@@ -23,17 +26,23 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class SettingsActivity : Activity() {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var detailsExecutor: ExecutorService? = null
     private lateinit var preferences: android.content.SharedPreferences
     private var previewOnly = false
+    private var previewPhotoPath: String? = null
+    private var detailsContainer: LinearLayout? = null
     private lateinit var closeButton: TextView
     private lateinit var folderLabel: TextView
     private lateinit var folderOption: TextView
     private lateinit var screensaverOption: TextView
     private lateinit var screensaverStatus: TextView
-    private lateinit var permissionOption: TextView
     private lateinit var speedOption: TextView
     private lateinit var styleOption: TextView
     private lateinit var shuffleOption: TextView
@@ -45,6 +54,7 @@ class SettingsActivity : Activity() {
         super.onCreate(savedInstanceState)
         preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
         previewOnly = intent.getBooleanExtra(PREVIEW_ONLY, false)
+        previewPhotoPath = intent.getStringExtra(PREVIEW_PHOTO_PATH)
         setContentView(createSettingsView())
         window.setBackgroundDrawableResource(android.R.color.transparent)
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -55,12 +65,19 @@ class SettingsActivity : Activity() {
         )
         window.attributes = window.attributes.apply { dimAmount = 0.55f }
         refreshSettings()
+        if (previewOnly) loadPreviewPhotoDetails()
         when {
             previewOnly -> showDateOption.requestFocus()
-            permissionOption.isEnabled -> permissionOption.requestFocus()
             folderOption.isEnabled -> folderOption.requestFocus()
             else -> closeButton.requestFocus()
         }
+    }
+
+    override fun onDestroy() {
+        detailsExecutor?.shutdownNow()
+        detailsExecutor = null
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -85,7 +102,11 @@ class SettingsActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_STORAGE_PERMISSION) {
             refreshSettings()
-            if (folderOption.isEnabled) folderOption.requestFocus()
+            if (hasPhotoPermission()) {
+                openFolderPicker()
+            } else {
+                folderOption.requestFocus()
+            }
         }
     }
 
@@ -126,13 +147,12 @@ class SettingsActivity : Activity() {
                 showDivider = false
             )
             folderLabel = addHelperText(content)
-            permissionOption = addOption(content) { requestPhotoPermission() }
             folderOption = addOption(content) {
-                val intent = Intent(this, FolderPickerActivity::class.java)
-                preferences.getString(PHOTO_FOLDER, null)?.let {
-                    intent.putExtra(FolderPickerActivity.START_FOLDER, it)
+                if (hasPhotoPermission()) {
+                    openFolderPicker()
+                } else {
+                    requestPhotoPermission()
                 }
-                startActivityForResult(intent, PICK_FOLDER)
             }
         }
 
@@ -150,6 +170,35 @@ class SettingsActivity : Activity() {
             val enabled = preferences.getBoolean(SHOW_PHOTO_LOCATION, true)
             preferences.edit().putBoolean(SHOW_PHOTO_LOCATION, !enabled).apply()
             refreshSettings()
+        }
+
+        if (previewOnly && previewPhotoPath != null) {
+            addSectionHeader(
+                content,
+                getString(R.string.settings_section_photo_details),
+                showDivider = true
+            )
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+                isFocusable = true
+                isFocusableInTouchMode = true
+                background = createDetailsCardBackground(focused = false)
+                setOnFocusChangeListener { v, hasFocus ->
+                    v.background = createDetailsCardBackground(focused = hasFocus)
+                }
+            }
+            card.addView(TextView(this).apply {
+                text = getString(R.string.detail_loading)
+                textSize = 14f
+                typeface = TvDesignTokens.fontLight
+                setTextColor(TvDesignTokens.textSecondary)
+            })
+            detailsContainer = card
+            content.addView(
+                card,
+                LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+            )
         }
 
         if (!previewOnly) {
@@ -266,17 +315,8 @@ class SettingsActivity : Activity() {
             R.string.current_folder,
             folder ?: getString(R.string.no_folder_selected)
         )
-        val permission = photoPermission()
-        val granted = Build.VERSION.SDK_INT < 23 ||
-            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-        permissionOption.text = getString(
-            if (granted) R.string.storage_permission_granted else R.string.grant_storage_permission
-        )
-        permissionOption.isEnabled = !granted
-        refreshCardOptionStyle(permissionOption)
-
         folderOption.text = getString(R.string.choose_folder)
-        folderOption.isEnabled = granted
+        folderOption.isEnabled = true
         refreshCardOptionStyle(folderOption)
 
         val screensaverSelected = isPhotoDreamSelected()
@@ -341,6 +381,18 @@ class SettingsActivity : Activity() {
         refreshCardOptionStyle(photoSetOption)
     }
 
+    private fun openFolderPicker() {
+        val intent = Intent(this, FolderPickerActivity::class.java)
+        preferences.getString(PHOTO_FOLDER, null)?.let {
+            intent.putExtra(FolderPickerActivity.START_FOLDER, it)
+        }
+        startActivityForResult(intent, PICK_FOLDER)
+    }
+
+    private fun hasPhotoPermission(): Boolean =
+        Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED
+
     private fun requestPhotoPermission() {
         requestPermissions(arrayOf(photoPermission()), REQUEST_STORAGE_PERMISSION)
     }
@@ -364,9 +416,98 @@ class SettingsActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
         else Manifest.permission.READ_EXTERNAL_STORAGE
 
+    private fun createDetailsCardBackground(focused: Boolean): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(10).toFloat()
+            setColor(if (focused) TvDesignTokens.surfaceCard else TvDesignTokens.surfaceRow)
+            setStroke(
+                if (focused) focusStrokePx() else dp(1),
+                if (focused) Color.WHITE else TvDesignTokens.borderSubtle
+            )
+        }
+
+    private fun loadPreviewPhotoDetails() {
+        val path = previewPhotoPath ?: return
+        val file = File(path)
+        val worker = detailsExecutor ?: Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "photo-details").apply { isDaemon = true }
+        }.also { detailsExecutor = it }
+        worker.execute {
+            val details = PhotoMetadata.readDetails(file)
+            mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
+                renderPhotoDetails(details, locationName = null)
+            }
+            val coords = details.coordinates ?: return@execute
+            val locationName = PhotoLocationNames.lookup(this, coords[0], coords[1]) ?: return@execute
+            mainHandler.post {
+                if (isFinishing || isDestroyed) return@post
+                renderPhotoDetails(details, locationName = locationName)
+            }
+        }
+    }
+
+    private fun renderPhotoDetails(details: PhotoDetails, locationName: String?) {
+        val container = detailsContainer ?: return
+        container.removeAllViews()
+        val rows = buildList {
+            add(getString(R.string.detail_file) to details.fileName)
+            details.dateTimeText?.let { add(getString(R.string.detail_date_time) to it) }
+            val resolutionAndSize = listOfNotNull(details.resolution, details.fileSizeText)
+                .joinToString(" · ")
+                .ifEmpty { null }
+            resolutionAndSize?.let { add(getString(R.string.detail_resolution) to it) }
+            details.camera?.let { add(getString(R.string.detail_camera) to it) }
+            details.shutterSpeed?.let { add(getString(R.string.detail_shutter) to it) }
+            details.aperture?.let { add(getString(R.string.detail_aperture) to it) }
+            details.iso?.let { add(getString(R.string.detail_iso) to it) }
+            details.focalLength?.let { add(getString(R.string.detail_focal_length) to it) }
+            locationName?.let { add(getString(R.string.detail_location) to it) }
+            details.coordinatesText?.let { add(getString(R.string.detail_coordinates) to it) }
+        }
+        rows.forEachIndexed { index, (label, value) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(5), 0, dp(5))
+            }
+            row.addView(
+                TextView(this).apply {
+                    text = label
+                    textSize = 14f
+                    typeface = TvDesignTokens.fontLight
+                    setTextColor(TvDesignTokens.textMuted)
+                    maxLines = 1
+                },
+                LinearLayout.LayoutParams(0, -2, 0.42f).apply { rightMargin = dp(10) }
+            )
+            row.addView(
+                TextView(this).apply {
+                    text = value
+                    textSize = 14f
+                    typeface = TvDesignTokens.fontLight
+                    setTextColor(TvDesignTokens.textPrimary)
+                    gravity = Gravity.END
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                },
+                LinearLayout.LayoutParams(0, -2, 0.58f)
+            )
+            container.addView(row, LinearLayout.LayoutParams(-1, -2))
+            if (index < rows.lastIndex) {
+                container.addView(
+                    View(this).apply { setBackgroundColor(TvDesignTokens.divider) },
+                    LinearLayout.LayoutParams(-1, dp(1))
+                )
+            }
+        }
+    }
+
     companion object {
         const val PREFERENCES = "photo_dream_settings"
         const val PREVIEW_ONLY = "preview_only"
+        const val PREVIEW_PHOTO_PATH = "preview_photo_path"
         const val PHOTO_FOLDER = "photo_folder"
         const val INTERVAL_SECONDS = "interval_seconds"
         const val SHOW_PHOTO_DATE = "show_photo_date"

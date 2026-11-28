@@ -43,6 +43,7 @@ class PhotoPreviewActivity : Activity() {
     private lateinit var photo: File
     private lateinit var contentRoot: FrameLayout
     private lateinit var image: ImageView
+    private lateinit var loadingWave: WaveLoadingView
     private lateinit var status: TextView
     private lateinit var topIcons: LinearLayout
     private lateinit var favoriteButton: ImageButton
@@ -54,6 +55,7 @@ class PhotoPreviewActivity : Activity() {
     private lateinit var leftIndicator: ImageView
     private lateinit var rightIndicator: ImageView
     private var hideIndicatorsCallback: Runnable? = null
+    private var retryOpenCallback: Runnable? = null
     private lateinit var optionsOverlay: RightOptionsOverlay
     private lateinit var dateOptionButton: TextView
     private lateinit var locationOptionButton: TextView
@@ -188,8 +190,11 @@ class PhotoPreviewActivity : Activity() {
     override fun onDestroy() {
         hideIndicatorsCallback?.let(mainHandler::removeCallbacks)
         hideIndicatorsCallback = null
+        retryOpenCallback?.let(mainHandler::removeCallbacks)
+        retryOpenCallback = null
         if (::leftIndicator.isInitialized) leftIndicator.animate().cancel()
         if (::rightIndicator.isInitialized) rightIndicator.animate().cancel()
+        if (::loadingWave.isInitialized) loadingWave.stop()
         indexWorker?.shutdownNow()
         cancelImageLoad()
         imageWorker?.shutdownNow()
@@ -212,6 +217,14 @@ class PhotoPreviewActivity : Activity() {
             contentDescription = photo.name
         }
         content.addView(image, FrameLayout.LayoutParams(-1, -1))
+        content.addView(
+            createEdgeScrim(fromTop = true),
+            FrameLayout.LayoutParams(-1, dp(100), Gravity.TOP)
+        )
+        content.addView(
+            createEdgeScrim(fromTop = false),
+            FrameLayout.LayoutParams(-1, dp(90), Gravity.BOTTOM)
+        )
 
         favoriteButton = createIconButton(
             R.drawable.ic_favorite,
@@ -232,6 +245,7 @@ class PhotoPreviewActivity : Activity() {
             startActivity(
                 Intent(this, SettingsActivity::class.java)
                     .putExtra(SettingsActivity.PREVIEW_ONLY, true)
+                    .putExtra(SettingsActivity.PREVIEW_PHOTO_PATH, photo.absolutePath)
             )
         }
         topIcons = LinearLayout(this).apply {
@@ -253,7 +267,7 @@ class PhotoPreviewActivity : Activity() {
             textSize = 16f
             typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
-            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
         }
@@ -274,7 +288,7 @@ class PhotoPreviewActivity : Activity() {
             textSize = 15f
             typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
-            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
             gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -283,7 +297,7 @@ class PhotoPreviewActivity : Activity() {
             textSize = 15f
             typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
-            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -301,11 +315,16 @@ class PhotoPreviewActivity : Activity() {
             }
         )
 
+        loadingWave = WaveLoadingView(this, getString(R.string.preview_loading))
+        content.addView(loadingWave, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        loadingWave.start()
+
         status = TextView(this).apply {
-            text = getString(R.string.gallery_scanning)
             textSize = 20f
+            typeface = TvDesignTokens.fontLight
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            visibility = View.GONE
         }
         content.addView(status, FrameLayout.LayoutParams(-1, -1))
 
@@ -497,9 +516,11 @@ class PhotoPreviewActivity : Activity() {
         }
     }
 
-    private fun displayPhoto(file: File) {
+    private fun displayPhoto(file: File, retryAttempt: Int = 0) {
         photo = file
         val generation = ++displayGeneration
+        retryOpenCallback?.let(mainHandler::removeCallbacks)
+        retryOpenCallback = null
         cancelImageLoad()
         imageLoadTask = imageWorker?.submit {
             val bitmap = PhotoImageDecoder.decodeForDisplay(this, file)
@@ -507,6 +528,20 @@ class PhotoPreviewActivity : Activity() {
             mainHandler.post {
                 if (generation != displayGeneration || isFinishing || isDestroyed) {
                     bitmap?.recycle()
+                    return@post
+                }
+                if (bitmap == null && !file.canRead() && retryAttempt < MAX_STORAGE_WAKE_RETRIES) {
+                    // External USB HDD may still be spinning up after TV sleep; retry briefly.
+                    status.visibility = View.GONE
+                    loadingWave.start()
+                    val retry = Runnable {
+                        retryOpenCallback = null
+                        if (generation == displayGeneration && !isFinishing && !isDestroyed) {
+                            displayPhoto(file, retryAttempt + 1)
+                        }
+                    }
+                    retryOpenCallback = retry
+                    mainHandler.postDelayed(retry, STORAGE_WAKE_RETRY_DELAY_MS)
                     return@post
                 }
                 showPhoto(file, bitmap, date)
@@ -520,6 +555,7 @@ class PhotoPreviewActivity : Activity() {
         updateFooter()
         refreshLocation()
         updateFavoriteButton()
+        loadingWave.stop()
         if (bitmap == null) {
             status.text = getString(R.string.preview_photo_unavailable, file.name)
             status.visibility = View.VISIBLE
@@ -634,6 +670,8 @@ class PhotoPreviewActivity : Activity() {
         private const val REQUEST_SLIDESHOW = 1
         private const val INDICATOR_HOLD_DURATION_MS = 2500L
         private const val INDICATOR_EXIT_DURATION_MS = 350L
+        private const val MAX_STORAGE_WAKE_RETRIES = 5
+        private const val STORAGE_WAKE_RETRY_DELAY_MS = 1500L
         const val PHOTO_PATH = "photo_path"
         const val PHOTO_FOLDER = "photo_folder"
         const val PHOTO_FAVORITES_ONLY = "photo_favorites_only"

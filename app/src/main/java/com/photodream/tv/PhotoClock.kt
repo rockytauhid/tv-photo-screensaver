@@ -10,12 +10,11 @@ import android.text.format.DateFormat
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
-import java.util.Locale
 
 internal class PhotoClock(
     private val context: Context,
     private val handler: Handler,
-    private val alignment: Int = Gravity.END
+    private val alignment: Int = Gravity.CENTER_HORIZONTAL
 ) {
     val view = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -24,16 +23,18 @@ internal class PhotoClock(
 
     private val date = TextView(context).apply {
         setTextColor(Color.WHITE)
-        textSize = 16f
+        textSize = 15f
         typeface = TvDesignTokens.fontLight
-        setShadowLayer(5f, 1f, 1f, Color.BLACK)
+        includeFontPadding = false
+        setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
         gravity = alignment
     }
     private val time = TextView(context).apply {
         setTextColor(Color.WHITE)
-        textSize = 38f
+        textSize = 40f
         typeface = TvDesignTokens.fontClock
-        setShadowLayer(5f, 1f, 1f, Color.BLACK)
+        includeFontPadding = false
+        setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
         gravity = alignment
     }
     private val update = object : Runnable {
@@ -60,9 +61,7 @@ internal class PhotoClock(
 
     private fun updateText() {
         val now = System.currentTimeMillis()
-        date.text = DateFormat.format("EEE, MMM d", now)
-            .toString()
-            .uppercase(Locale.getDefault())
+        date.text = DateFormat.format("EEE, MMM d", now).toString()
         time.text = DateFormat.format(
             if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm",
             now

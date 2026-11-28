@@ -4,7 +4,10 @@
 package com.photodream.tv
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
@@ -51,6 +54,8 @@ class GalleryActivity : Activity() {
     private lateinit var startSlideshowButton: ImageButton
     private lateinit var settingsButton: ImageButton
     private lateinit var selectedDateLabel: TextView
+    private lateinit var selectedLocationLabel: TextView
+    private lateinit var locationLoader: PhotoLocationLoader
     private lateinit var optionsOverlay: RightOptionsOverlay
     private lateinit var dateOptionButton: TextView
     private lateinit var locationOptionButton: TextView
@@ -62,7 +67,6 @@ class GalleryActivity : Activity() {
     private lateinit var leftPeekHolder: GalleryHolder
     private lateinit var rightPeekHolder: GalleryHolder
     private lateinit var galleryFrame: FrameLayout
-    private lateinit var loadingOverlay: LinearLayout
     private lateinit var status: TextView
     private lateinit var adapter: GalleryAdapter
     private var photoFolderPath: String? = null
@@ -80,18 +84,58 @@ class GalleryActivity : Activity() {
     private var expandedYear: Int? = null
     private lateinit var preferences: PhotoPreferences
     private lateinit var repository: PhotoRepository
+    private val preferenceChangeListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (isFinishing || isDestroyed) return@OnSharedPreferenceChangeListener
+            when (key) {
+                SettingsActivity.PHOTO_FOLDER -> {
+                    val currentFolder = preferences.photoFolder
+                    if (currentFolder != photoFolderPath) {
+                        loadPhotos()
+                    }
+                }
+                SettingsActivity.SHOW_PHOTO_DATE,
+                SettingsActivity.SHOW_PHOTO_LOCATION -> {
+                    updateSelectedMetadata(grid.selectedPosition)
+                }
+            }
+        }
     private var scanGeneration = 0
     private var loadedWithPermission = false
     private var refreshFavoritesWhenResumed = false
     private var openedInitialSettings = false
+    private var requestedInitialPermission = false
+    private var waitingForStorage = false
+    private var storageRetryCount = 0
+    private var storageRetryRunnable: Runnable? = null
+    private var mediaReceiverRegistered = false
+    private val mediaMountReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (isFinishing || isDestroyed) return
+            val folder = preferences.photoFolder ?: return
+            if (LocalPhotoSource.isFolderAvailable(File(folder))) {
+                if (waitingForStorage || allPhotos.isEmpty()) {
+                    loadPhotos()
+                } else {
+                    adapter.retryFailedThumbnails()
+                }
+            }
+        }
+    }
     private var thumbnailSizeDp = 120
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.AppTheme)
         super.onCreate(savedInstanceState)
         preferences = PhotoPreferences(this)
+        preferences.raw.registerOnSharedPreferenceChangeListener(preferenceChangeListener)
+        registerMediaMountReceiver()
         repository = PhotoRepository(this)
+        locationLoader = PhotoLocationLoader(this, mainHandler)
         openedInitialSettings =
             savedInstanceState?.getBoolean(OPENED_INITIAL_SETTINGS, false) ?: false
+        requestedInitialPermission =
+            savedInstanceState?.getBoolean(REQUESTED_INITIAL_PERMISSION, false) ?: false
         window.requestFeature(Window.FEATURE_NO_TITLE)
         setContentView(createContentView())
         adapter = GalleryAdapter()
@@ -137,6 +181,18 @@ class GalleryActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(OPENED_INITIAL_SETTINGS, openedInitialSettings)
+        outState.putBoolean(REQUESTED_INITIAL_PERMISSION, requestedInitialPermission)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            loadPhotos()
+        }
     }
 
     override fun onResume() {
@@ -147,11 +203,32 @@ class GalleryActivity : Activity() {
         if (currentFolder != photoFolderPath || hasPermission != loadedWithPermission) {
             refreshFavoritesWhenResumed = false
             loadPhotos()
-        } else if (refreshFavoritesWhenResumed) {
+            return
+        }
+        if (currentFolder != null && hasPermission) {
+            val available = LocalPhotoSource.isFolderAvailable(File(currentFolder))
+            if (waitingForStorage && available) {
+                loadPhotos()
+                return
+            }
+            if (!available && allPhotos.isEmpty()) {
+                scheduleStorageRetry(currentFolder)
+                return
+            }
+            if (available) {
+                adapter.retryFailedThumbnails()
+            }
+        }
+        if (refreshFavoritesWhenResumed) {
             refreshFavoritesWhenResumed = false
             refreshFavoriteFilter()
             updateSelectedMetadata(grid.selectedPosition)
         }
+    }
+
+    override fun onPause() {
+        cancelStorageRetry()
+        super.onPause()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -190,8 +267,14 @@ class GalleryActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelStorageRetry()
+        unregisterMediaMountReceiver()
+        if (::preferences.isInitialized) {
+            preferences.raw.unregisterOnSharedPreferenceChangeListener(preferenceChangeListener)
+        }
         scanGeneration++
         scanExecutor?.shutdownNow()
+        if (::locationLoader.isInitialized) locationLoader.shutdown()
         if (::adapter.isInitialized) adapter.close()
         super.onDestroy()
     }
@@ -259,7 +342,7 @@ class GalleryActivity : Activity() {
             toggleFavoritesFilter()
         }
         header.addView(favoritesFilterButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-            setMargins(dp(8), 0, dp(4), 0)
+            leftMargin = dp(8)
         })
         startSlideshowButton = createIconButton(
             R.drawable.ic_play_arrow,
@@ -268,7 +351,7 @@ class GalleryActivity : Activity() {
             startSlideshowFromSelection()
         }
         header.addView(startSlideshowButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-            setMargins(dp(8), 0, dp(8), 0)
+            leftMargin = dp(8)
         })
         settingsButton = createIconButton(
             R.drawable.ic_settings,
@@ -276,7 +359,9 @@ class GalleryActivity : Activity() {
         ) {
             openSettings()
         }
-        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            leftMargin = dp(8)
+        })
         root.addView(
             header,
             FrameLayout.LayoutParams(-1, dp(44), Gravity.TOP).apply {
@@ -355,39 +440,6 @@ class GalleryActivity : Activity() {
             FrameLayout.LayoutParams(-1, dp(gridHeightDp), Gravity.CENTER)
         )
 
-        loadingOverlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(TvDesignTokens.background)
-            visibility = View.GONE
-            addView(
-                ImageView(this@GalleryActivity).apply {
-                    setImageResource(R.mipmap.ic_launcher)
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                },
-                LinearLayout.LayoutParams(dp(64), dp(64))
-            )
-            addView(
-                TextView(this@GalleryActivity).apply {
-                    text = getString(R.string.app_name)
-                    textSize = 24f
-                    typeface = TvDesignTokens.fontLight
-                    setTextColor(Color.WHITE)
-                    setPadding(0, dp(14), 0, dp(20))
-                },
-                LinearLayout.LayoutParams(-2, -2)
-            )
-            addView(
-                ProgressBar(this@GalleryActivity).apply {
-                    isIndeterminate = true
-                    indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-                },
-                LinearLayout.LayoutParams(dp(36), dp(36))
-            )
-        }
-        root.addView(loadingOverlay, FrameLayout.LayoutParams(-1, -1))
-
         status = TextView(this).apply {
             textSize = 18f
             setTextColor(0xFFBBBBBB.toInt())
@@ -401,7 +453,6 @@ class GalleryActivity : Activity() {
             }
         )
 
-        // Only the date is shown here (bottom left); aligned with the title, Year, and bottom safe margin.
         selectedDateLabel = TextView(this).apply {
             textSize = 15f
             typeface = TvDesignTokens.fontLight
@@ -410,14 +461,26 @@ class GalleryActivity : Activity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
+        selectedLocationLabel = TextView(this).apply {
+            textSize = 15f
+            typeface = TvDesignTokens.fontLight
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(selectedDateLabel, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(selectedLocationLabel, LinearLayout.LayoutParams(0, -2, 1f))
+        }
         root.addView(
-            selectedDateLabel,
+            footer,
             FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
                 setMargins(horizontalEdge, 0, horizontalEdge, verticalEdge)
             }
         )
-
-        loadingOverlay.bringToFront()
 
         optionsOverlay = RightOptionsOverlay(this)
         optionsOverlay.onDismissed = { grid.requestFocus() }
@@ -549,6 +612,8 @@ class GalleryActivity : Activity() {
         favoritePaths = emptySet()
         favoritesOnly = false
         selectedDateLabel.text = ""
+        selectedLocationLabel.text = ""
+        locationLoader.cancel()
         highlightedDate = null
         expandedYear = null
         photoFolderPath = null
@@ -563,7 +628,10 @@ class GalleryActivity : Activity() {
         loadedWithPermission = hasPermission
         if (!hasPermission) {
             renderState(GalleryUiState.NeedsPermission)
-            openSettingsOnFirstRun()
+            if (!requestedInitialPermission && Build.VERSION.SDK_INT >= 23) {
+                requestedInitialPermission = true
+                requestPermissions(arrayOf(photoPermission()), REQUEST_STORAGE_PERMISSION)
+            }
             return
         }
 
@@ -574,11 +642,25 @@ class GalleryActivity : Activity() {
             return
         }
         photoFolderPath = folderPath
+        cancelStorageRetry()
+        waitingForStorage = false
+        storageRetryCount = 0
 
         val source = repository.localSource(folderPath)
         val cachedRefs = source.loadCached()
+        val folderAvailable = LocalPhotoSource.isFolderAvailable(File(folderPath))
         if (cachedRefs.isNotEmpty()) {
             applyLoadedRefs(cachedRefs, keepPath = null, requestGridFocus = true)
+            if (!folderAvailable) {
+                waitingForStorage = true
+                scheduleStorageRetry(folderPath)
+                return
+            }
+        } else if (!folderAvailable) {
+            waitingForStorage = true
+            renderState(GalleryUiState.WaitingForStorage)
+            scheduleStorageRetry(folderPath)
+            return
         } else {
             renderState(GalleryUiState.Loading)
         }
@@ -606,9 +688,8 @@ class GalleryActivity : Activity() {
                 return@execute
             }
 
-            // Fresh folder: list files quickly without EXIF, pre-warm the first page of thumbnails
-            // within the 3-second loading screen budget, then read full EXIF dates in the background.
-            val deadlineMillis = System.currentTimeMillis() + MAX_LOADING_SCREEN_MS
+            // Fresh folder: list files quickly without EXIF and show the gallery right away,
+            // then read full EXIF capture dates in the background.
             val fastFiles = PhotoFiles.listImages(File(folderPath))
             val fastRefs = fastFiles.map { file ->
                 val modified = file.lastModified()
@@ -620,14 +701,6 @@ class GalleryActivity : Activity() {
                     lastModified = modified,
                     size = file.length()
                 )
-            }
-            val fastOrdered = fastRefs.sortedByDescending { it.captureTimeMillis }
-            val warmCount = minOf(INITIAL_WARM_THUMBNAIL_COUNT, fastOrdered.size)
-            for (i in 0 until warmCount) {
-                if (generation != scanGeneration || System.currentTimeMillis() >= deadlineMillis) {
-                    break
-                }
-                adapter.warmThumbnail(File(fastOrdered[i].id))
             }
             mainHandler.post {
                 if (isFinishing || isDestroyed || generation != scanGeneration) return@post
@@ -650,7 +723,6 @@ class GalleryActivity : Activity() {
     private fun renderState(state: GalleryUiState) {
         when (state) {
             GalleryUiState.NeedsPermission -> {
-                loadingOverlay.visibility = View.GONE
                 galleryFrame.visibility = View.INVISIBLE
                 status.setText(R.string.permission_required)
                 status.visibility = View.VISIBLE
@@ -659,7 +731,6 @@ class GalleryActivity : Activity() {
                 settingsButton.requestFocus()
             }
             GalleryUiState.NeedsFolder -> {
-                loadingOverlay.visibility = View.GONE
                 galleryFrame.visibility = View.INVISIBLE
                 status.setText(R.string.gallery_no_folder)
                 status.visibility = View.VISIBLE
@@ -668,14 +739,19 @@ class GalleryActivity : Activity() {
                 settingsButton.requestFocus()
             }
             GalleryUiState.Loading -> {
-                loadingOverlay.visibility = View.VISIBLE
                 galleryFrame.visibility = View.INVISIBLE
                 status.visibility = View.GONE
                 startSlideshowButton.isEnabled = false
                 headerTitle.text = getString(R.string.app_name)
             }
+            GalleryUiState.WaitingForStorage -> {
+                galleryFrame.visibility = View.INVISIBLE
+                status.setText(R.string.gallery_waiting_for_storage)
+                status.visibility = View.VISIBLE
+                startSlideshowButton.isEnabled = false
+                headerTitle.text = getString(R.string.app_name)
+            }
             GalleryUiState.Empty -> {
-                loadingOverlay.visibility = View.GONE
                 galleryFrame.visibility = View.INVISIBLE
                 status.setText(R.string.gallery_no_photos)
                 status.visibility = View.VISIBLE
@@ -685,7 +761,6 @@ class GalleryActivity : Activity() {
                 settingsButton.requestFocus()
             }
             is GalleryUiState.Ready -> {
-                loadingOverlay.visibility = View.GONE
                 galleryFrame.visibility = View.VISIBLE
                 status.visibility = View.GONE
                 startSlideshowButton.isEnabled = true
@@ -751,20 +826,88 @@ class GalleryActivity : Activity() {
                 ?: 0
             jumpTo(targetIndex, null)
             if (requestGridFocus || (!optionsOverlay.isVisible && currentFocus == null)) {
-                grid.requestFocus()
+                focusGridPosition(targetIndex)
             }
         }
     }
 
-    private fun hasPhotoPermission(): Boolean {
-        val permission = if (Build.VERSION.SDK_INT >= 33) {
+    private fun focusGridPosition(position: Int) {
+        if (adapter.itemCount <= 0) return
+        val safePosition = position.coerceIn(0, adapter.itemCount - 1)
+        grid.selectedPosition = safePosition
+        grid.requestFocus()
+        grid.post {
+            if (isFinishing || isDestroyed || optionsOverlay.isVisible) return@post
+            if (adapter.itemCount <= 0) return@post
+            val index = safePosition.coerceIn(0, adapter.itemCount - 1)
+            grid.selectedPosition = index
+            val targetView = grid.findViewHolderForAdapterPosition(index)?.itemView
+            if (targetView != null) {
+                targetView.requestFocus()
+            } else {
+                grid.requestFocus()
+            }
+            adapter.setHighlightedPosition(index)
+            updateEdgePreviews(index)
+            updateSelectedMetadata(index)
+        }
+    }
+
+    private fun registerMediaMountReceiver() {
+        if (mediaReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED)
+            addAction(Intent.ACTION_MEDIA_SCANNER_FINISHED)
+            addDataScheme("file")
+        }
+        registerReceiver(mediaMountReceiver, filter)
+        mediaReceiverRegistered = true
+    }
+
+    private fun unregisterMediaMountReceiver() {
+        if (!mediaReceiverRegistered) return
+        try {
+            unregisterReceiver(mediaMountReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered.
+        }
+        mediaReceiverRegistered = false
+    }
+
+    private fun scheduleStorageRetry(folderPath: String) {
+        cancelStorageRetry()
+        if (storageRetryCount >= MAX_STORAGE_WAIT_RETRIES) return
+        val retry = Runnable {
+            storageRetryRunnable = null
+            if (isFinishing || isDestroyed || photoFolderPath != folderPath) return@Runnable
+            if (LocalPhotoSource.isFolderAvailable(File(folderPath))) {
+                waitingForStorage = false
+                storageRetryCount = 0
+                loadPhotos()
+            } else {
+                storageRetryCount++
+                scheduleStorageRetry(folderPath)
+            }
+        }
+        storageRetryRunnable = retry
+        mainHandler.postDelayed(retry, STORAGE_WAIT_RETRY_MS)
+    }
+
+    private fun cancelStorageRetry() {
+        storageRetryRunnable?.let(mainHandler::removeCallbacks)
+        storageRetryRunnable = null
+    }
+
+    private fun photoPermission(): String =
+        if (Build.VERSION.SDK_INT >= 33) {
             "android.permission.READ_MEDIA_IMAGES"
         } else {
             "android.permission.READ_EXTERNAL_STORAGE"
         }
-        return Build.VERSION.SDK_INT < 23 ||
-            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-    }
+
+    private fun hasPhotoPermission(): Boolean =
+        Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED
 
     private fun toggleFavoritesFilter() {
         if (!favoritesOnly && !hasFavoritesInFolder()) return
@@ -1037,16 +1180,31 @@ class GalleryActivity : Activity() {
     private fun updateSelectedMetadata(position: Int) {
         if (!::adapter.isInitialized || !::selectedDateLabel.isInitialized) return
         val photo = if (position in 0 until adapter.itemCount) adapter.getItem(position) else null
-        val showDate = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
-            .getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        val prefs = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
+        val showDate = prefs.getBoolean(SettingsActivity.SHOW_PHOTO_DATE, true)
+        val showLocation = prefs.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
         if (photo == null || !showDate) {
             selectedDateLabel.text = ""
-            return
+        } else {
+            val captureTime = timeline?.captureTimesByPath?.get(photo.absolutePath)
+                ?: photo.lastModified()
+            selectedDateLabel.text =
+                android.text.format.DateFormat.format("MMM dd, yyyy", captureTime)
         }
-        val captureTime = timeline?.captureTimesByPath?.get(photo.absolutePath)
-            ?: photo.lastModified()
-        selectedDateLabel.text =
-            android.text.format.DateFormat.format("MMM dd, yyyy", captureTime)
+        selectedLocationLabel.text = ""
+        if (photo == null || !showLocation) {
+            locationLoader.cancel()
+        } else {
+            locationLoader.load(photo) { location ->
+                if (isFinishing || isDestroyed) return@load
+                val current = grid.selectedPosition
+                if (current in 0 until adapter.itemCount &&
+                    adapter.getItem(current).absolutePath == photo.absolutePath
+                ) {
+                    selectedLocationLabel.text = location.orEmpty()
+                }
+            }
+        }
     }
 
     private fun toggleOptions() {
@@ -1070,12 +1228,12 @@ class GalleryActivity : Activity() {
         updateSelectedMetadata(grid.selectedPosition)
     }
 
-    /** The gallery itself shows no location; this setting is shared with the preview and slideshow. */
     private fun toggleShowLocation() {
         val preferences = getSharedPreferences(SettingsActivity.PREFERENCES, MODE_PRIVATE)
         val show = !preferences.getBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, true)
         preferences.edit().putBoolean(SettingsActivity.SHOW_PHOTO_LOCATION, show).apply()
         updateOptionLabels()
+        updateSelectedMetadata(grid.selectedPosition)
     }
 
     private fun updateOptionLabels() {
@@ -1120,6 +1278,12 @@ class GalleryActivity : Activity() {
             }
         )
         private var closed = false
+
+        fun retryFailedThumbnails() {
+            if (failedThumbnails.isEmpty()) return
+            failedThumbnails.clear()
+            notifyDataSetChanged()
+        }
         private var highlightedPosition = -1
 
         override fun getItemCount(): Int = photos.size
@@ -1450,6 +1614,7 @@ class GalleryActivity : Activity() {
         data object NeedsPermission : GalleryUiState
         data object NeedsFolder : GalleryUiState
         data object Loading : GalleryUiState
+        data object WaitingForStorage : GalleryUiState
         data object Empty : GalleryUiState
         data class Ready(val itemCount: Int) : GalleryUiState
     }
@@ -1458,10 +1623,14 @@ class GalleryActivity : Activity() {
         private const val REQUEST_SLIDESHOW = 1
         private const val REQUEST_PREVIEW = 2
         private const val REQUEST_SETTINGS = 3
+        private const val REQUEST_STORAGE_PERMISSION = 4
+        private const val MAX_STORAGE_WAIT_RETRIES = 15
+        private const val STORAGE_WAIT_RETRY_MS = 2000L
         private const val MAX_FAILED_THUMBNAILS = 128
         private const val MAX_LOADING_SCREEN_MS = 3000L
         private const val INITIAL_WARM_THUMBNAIL_COUNT = 24
         private const val OPENED_INITIAL_SETTINGS = "opened_initial_settings"
+        private const val REQUESTED_INITIAL_PERMISSION = "requested_initial_permission"
         private const val GRID_SPACING_DP = 10
         private const val GRID_VERTICAL_PADDING_DP = 14
         private const val SHORTCUT_HORIZONTAL_PADDING_DP = 10

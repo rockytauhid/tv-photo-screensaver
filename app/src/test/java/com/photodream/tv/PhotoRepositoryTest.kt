@@ -9,8 +9,42 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 class PhotoRepositoryTest {
+    @Test
+    fun localSourceRefreshPreservesCachedIndexWhenUsbFolderIsUnmounted() {
+        val tempDir = Files.createTempDirectory("photo-source-test").toFile()
+        try {
+            val indexFile = File(tempDir, "photo_index.tsv")
+            val missingUsbFolder = File(tempDir, "unmounted-usb-hdd")
+            val cached = listOf(
+                PhotoRef(
+                    id = File(missingUsbFolder, "a.jpg").absolutePath,
+                    sourceId = "local:${missingUsbFolder.absolutePath}",
+                    displayName = "a.jpg",
+                    captureTimeMillis = 1000L,
+                    lastModified = 1000L,
+                    size = 1234L
+                )
+            )
+            PhotoIndex.save(
+                indexFile,
+                missingUsbFolder.absolutePath,
+                listOf(IndexedPhoto(cached[0].id, 1000L, 1234L, 1000L))
+            )
+
+            val source = LocalPhotoSource(missingUsbFolder, indexFile)
+            val result = source.refresh(cached)
+
+            assertFalse(result.changed)
+            assertEquals(cached, result.items)
+            assertEquals(1, source.loadCached().size)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
     @Test
     fun offlineRefreshPreservesCachedPhotosWithoutThrowing() {
         val cached = listOf(photo("1", 1000L), photo("2", 2000L))

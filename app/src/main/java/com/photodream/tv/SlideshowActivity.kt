@@ -4,13 +4,13 @@
 package com.photodream.tv
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -21,7 +21,7 @@ import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ImageView
+import android.widget.TextView
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Future
@@ -52,7 +52,8 @@ class SlideshowActivity : Activity() {
     private lateinit var preferences: PhotoPreferences
     private lateinit var repository: PhotoRepository
     private lateinit var stage: SlideshowStage
-    private lateinit var pauseIndicator: ImageView
+    private lateinit var pauseIndicator: TextView
+    private var pausePulseAnimator: ObjectAnimator? = null
     private lateinit var locationLoader: PhotoLocationLoader
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,21 +70,19 @@ class SlideshowActivity : Activity() {
 
         stage = SlideshowStage(this, mainHandler)
         locationLoader = PhotoLocationLoader(this, mainHandler)
-        pauseIndicator = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(36), dp(36), dp(36), dp(36))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x99000000.toInt())
-                setStroke(dp(3), Color.WHITE)
-            }
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        pauseIndicator = TextView(this).apply {
+            setText(R.string.slideshow_paused)
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            typeface = TvDesignTokens.fontLight
+            setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
             visibility = View.GONE
         }
         stage.root.addView(
             pauseIndicator,
-            FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER)
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+                setMargins(dp(TV_HORIZONTAL_MARGIN_DP), dp(28), 0, 0)
+            }
         )
         setContentView(stage.root)
     }
@@ -91,11 +90,13 @@ class SlideshowActivity : Activity() {
     override fun onResume() {
         super.onResume()
         stage.clock.start()
+        if (isPaused) startPausePulse()
         startSlideshow()
     }
 
     override fun onPause() {
         stage.clock.stop()
+        stopPausePulse()
         initialPhotoPath =
             photos.getOrNull(displayedPhotoIndex)?.id ?: initialPhotoPath
         stopSlideshow(preserveCurrentPhoto = true)
@@ -103,6 +104,7 @@ class SlideshowActivity : Activity() {
     }
 
     override fun onDestroy() {
+        stopPausePulse()
         stopSlideshow()
         super.onDestroy()
     }
@@ -474,20 +476,32 @@ class SlideshowActivity : Activity() {
         showPlaybackIndicator(paused)
     }
 
-    /** Big circled icon in the middle: a pause icon that stays while paused, a play icon that fades out. */
+    /** Subtle gently pulsing "Paused" text in the top-left corner while paused; hidden when playing. */
     private fun showPlaybackIndicator(paused: Boolean) {
-        pauseIndicator.animate().cancel()
-        pauseIndicator.setImageResource(if (paused) R.drawable.ic_pause else R.drawable.ic_play_arrow)
-        pauseIndicator.visibility = View.VISIBLE
-        pauseIndicator.alpha = 1f
-        if (!paused) {
-            pauseIndicator.animate()
-                .alpha(0f)
-                .setStartDelay(1200)
-                .setDuration(1500)
-                .withEndAction { pauseIndicator.visibility = View.GONE }
-                .start()
+        if (paused) {
+            pauseIndicator.visibility = View.VISIBLE
+            startPausePulse()
+        } else {
+            stopPausePulse()
+            pauseIndicator.visibility = View.GONE
         }
+    }
+
+    private fun startPausePulse() {
+        stopPausePulse()
+        pauseIndicator.alpha = 1f
+        pausePulseAnimator = ObjectAnimator.ofFloat(pauseIndicator, View.ALPHA, 1f, 0.45f).apply {
+            duration = 1200L
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopPausePulse() {
+        pausePulseAnimator?.cancel()
+        pausePulseAnimator = null
+        pauseIndicator.alpha = 1f
     }
 
     private fun returnToGallery() {

@@ -45,6 +45,11 @@ internal class LocalPhotoSource(
         PhotoIndex.load(indexFile, root.absolutePath).map(::toRef)
 
     override fun refresh(cached: List<PhotoRef>): PhotoSourceRefreshResult {
+        // When an external USB drive is sleeping or remounting after TV wake, its mount point is
+        // temporarily missing or unreadable. Preserve the cached index instead of wiping it.
+        if (!isFolderAvailable(root)) {
+            return PhotoSourceRefreshResult(cached, changed = false)
+        }
         val cachedIndexed = cached.map {
             IndexedPhoto(it.id, it.lastModified, it.size, it.captureTimeMillis)
         }
@@ -54,6 +59,11 @@ internal class LocalPhotoSource(
             PhotoIndex.save(indexFile, root.absolutePath, result.entries)
         }
         return PhotoSourceRefreshResult(result.entries.map(::toRef), result.changed)
+    }
+
+    companion object {
+        fun isFolderAvailable(folder: File): Boolean =
+            folder.isDirectory && folder.canRead() && folder.listFiles() != null
     }
 
     override fun open(ref: PhotoRef, maxWidth: Int, maxHeight: Int): InputStream? =

@@ -3,6 +3,7 @@
 
 package com.photodream.tv
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -22,6 +23,7 @@ import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -331,11 +333,19 @@ internal class SlideshowStage(context: Context, handler: Handler) {
         textSize = 22f
         gravity = Gravity.CENTER
     }
-    val clock: PhotoClock = PhotoClock(context, handler, Gravity.END)
+    val clock: PhotoClock = PhotoClock(context, handler, Gravity.CENTER_HORIZONTAL)
     val root: FrameLayout = FrameLayout(context).apply {
         setBackgroundColor(Color.BLACK)
         addView(imageViews[0], FrameLayout.LayoutParams(-1, -1))
         addView(imageViews[1], FrameLayout.LayoutParams(-1, -1))
+        addView(
+            context.createEdgeScrim(fromTop = true),
+            FrameLayout.LayoutParams(-1, context.dp(110), Gravity.TOP)
+        )
+        addView(
+            context.createEdgeScrim(fromTop = false),
+            FrameLayout.LayoutParams(-1, context.dp(90), Gravity.BOTTOM)
+        )
         addView(status, FrameLayout.LayoutParams(-1, -1))
         val footer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -346,7 +356,12 @@ internal class SlideshowStage(context: Context, handler: Handler) {
         addView(
             footer,
             FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
-                setMargins(context.dp(40), 0, context.dp(40), context.dp(32))
+                setMargins(
+                    context.dp(TV_HORIZONTAL_MARGIN_DP),
+                    0,
+                    context.dp(TV_HORIZONTAL_MARGIN_DP),
+                    context.dp(TV_EDGE_MARGIN_DP)
+                )
             }
         )
         addView(
@@ -449,14 +464,88 @@ internal class SlideshowStage(context: Context, handler: Handler) {
     private fun footerLabel(context: Context, gravity: Int): TextView =
         TextView(context).apply {
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 15f
             typeface = TvDesignTokens.fontLight
-            setShadowLayer(5f, 1f, 1f, Color.BLACK)
+            setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt())
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             this.gravity = gravity
         }
 }
 
+/** Soft top/bottom edge vignette so white overlays stay legible over bright photos. */
+internal fun Context.createEdgeScrim(fromTop: Boolean): View =
+    View(this).apply {
+        background = GradientDrawable(
+            if (fromTop) GradientDrawable.Orientation.TOP_BOTTOM
+            else GradientDrawable.Orientation.BOTTOM_TOP,
+            intArrayOf(0x73000000, 0x26000000, 0x00000000)
+        )
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
 internal fun Context.dp(value: Int): Int =
     (value * resources.displayMetrics.density).toInt()
+
+/**
+ * Centered loading text where each character scales up and back down in a continuous left-to-right wave.
+ */
+internal class WaveLoadingView(
+    context: Context,
+    text: String
+) : LinearLayout(context) {
+    private val charViews: List<TextView>
+    private var animator: ValueAnimator? = null
+
+    init {
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER
+        clipChildren = false
+        clipToPadding = false
+        charViews = text.map { ch ->
+            TextView(context).apply {
+                this.text = ch.toString()
+                textSize = 20f
+                typeface = TvDesignTokens.fontLight
+                setTextColor(Color.WHITE)
+                setShadowLayer(5f, 1f, 1f, Color.BLACK)
+                includeFontPadding = false
+            }.also { charView ->
+                addView(charView, LayoutParams(-2, -2))
+            }
+        }
+    }
+
+    fun start() {
+        visibility = View.VISIBLE
+        if (animator?.isRunning == true || charViews.isEmpty()) return
+        val totalSpan = charViews.size + 1.5f
+        animator = ValueAnimator.ofFloat(-0.5f, totalSpan).apply {
+            duration = (charViews.size * 110L).coerceAtLeast(800L)
+            interpolator = LinearInterpolator()
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            addUpdateListener { anim ->
+                val phase = anim.animatedValue as Float
+                charViews.forEachIndexed { index, view ->
+                    val dist = kotlin.math.abs(phase - index)
+                    val bump = (1f - dist).coerceIn(0f, 1f)
+                    val scale = 1f + 0.38f * bump
+                    view.scaleX = scale
+                    view.scaleY = scale
+                }
+            }
+            start()
+        }
+    }
+
+    fun stop() {
+        animator?.cancel()
+        animator = null
+        charViews.forEach { view ->
+            view.scaleX = 1f
+            view.scaleY = 1f
+        }
+        visibility = View.GONE
+    }
+}
