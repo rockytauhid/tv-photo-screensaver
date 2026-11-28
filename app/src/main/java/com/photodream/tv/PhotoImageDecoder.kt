@@ -98,45 +98,39 @@ internal object PhotoImageDecoder {
     }
 
     /**
-     * Fast thumbnail decoder for gallery tiles: prefers the embedded EXIF thumbnail (~20 KB) when
-     * it is sharp enough, falling back to full sampled [decode] when absent or too small.
+     * Decodes only the tiny embedded EXIF thumbnail (~10–30 KB) with orientation applied, or null
+     * when the file has none. Used for instant stage-1 gallery previews before the crisp decode.
      */
-    fun decodeThumbnail(
+    fun decodeEmbeddedThumbnail(
         file: File,
-        maxWidth: Int,
-        maxHeight: Int,
         config: Bitmap.Config = Bitmap.Config.RGB_565
     ): Bitmap? {
         val exif = try {
             ExifInterface(file.absolutePath)
         } catch (_: IOException) {
             null
-        }
-        val embedded = exif?.thumbnailBytes
-        if (embedded != null && embedded.isNotEmpty()) {
-            val thumb = try {
-                BitmapFactory.decodeByteArray(
-                    embedded,
-                    0,
-                    embedded.size,
-                    BitmapFactory.Options().apply { inPreferredConfig = config }
-                )
-            } catch (_: OutOfMemoryError) {
-                null
-            }
-            if (thumb != null) {
-                if (minOf(thumb.width, thumb.height) >= MIN_EXIF_THUMBNAIL_PX) {
-                    val orientation = exif.getAttributeInt(
-                        ExifInterface.TAG_ORIENTATION,
-                        ExifInterface.ORIENTATION_NORMAL
-                    )
-                    return applyOrientation(thumb, orientation)
-                }
-                thumb.recycle()
-            }
-        }
-        return decode(file, maxWidth, maxHeight, config)
+        } ?: return null
+        val embedded = exif.thumbnailBytes
+        if (embedded == null || embedded.isEmpty()) return null
+        val thumb = try {
+            BitmapFactory.decodeByteArray(
+                embedded,
+                0,
+                embedded.size,
+                BitmapFactory.Options().apply { inPreferredConfig = config }
+            )
+        } catch (_: OutOfMemoryError) {
+            null
+        } ?: return null
+        val orientation = exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+        return applyOrientation(thumb, orientation)
     }
+
+    internal fun isThumbnailSharpEnough(width: Int, height: Int, targetPx: Int): Boolean =
+        width > 0 && height > 0 && minOf(width, height) >= targetPx
 
     fun decode(
         file: File,
@@ -195,8 +189,6 @@ internal object PhotoImageDecoder {
         if (transformed !== bitmap) bitmap.recycle()
         return transformed
     }
-
-    private const val MIN_EXIF_THUMBNAIL_PX = 120
 
     internal data class OrientationTransform(
         val rotationDegrees: Float = 0f,

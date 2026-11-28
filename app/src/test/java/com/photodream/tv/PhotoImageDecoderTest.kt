@@ -53,6 +53,13 @@ class PhotoImageDecoderTest {
     }
 
     @Test
+    fun embeddedThumbnailSharpnessChecksShortestSideAgainstTarget() {
+        assertFalse(PhotoImageDecoder.isThumbnailSharpEnough(160, 120, 260))
+        assertTrue(PhotoImageDecoder.isThumbnailSharpEnough(320, 260, 260))
+        assertFalse(PhotoImageDecoder.isThumbnailSharpEnough(0, 300, 260))
+    }
+
+    @Test
     fun mapsAllExifOrientationsIncludingMirroredOnes() {
         assertFalse(PhotoImageDecoder.swapsDimensions(ExifInterface.ORIENTATION_NORMAL))
         assertFalse(PhotoImageDecoder.swapsDimensions(ExifInterface.ORIENTATION_FLIP_HORIZONTAL))

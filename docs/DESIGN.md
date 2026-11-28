@@ -189,10 +189,13 @@ Keep these intentional behaviours intact when refactoring or optimizing:
   appears right away. The full EXIF capture-date pass runs on a `Thread.MIN_PRIORITY` worker after a `1.5s` delay and
   reuses the already-scanned file list (avoiding a second directory walk), so the first visible screen of thumbnails
   gets full USB/HDD I/O bandwidth without contention.
-- **Embedded EXIF thumbnails first (`PhotoImageDecoder.decodeThumbnail`):**
-  Gallery tiles prefer the embedded EXIF JPEG thumbnail (~20 KB in the file header) when its shortest side is at least
-  `120px`, applying EXIF orientation and falling back to sampled full JPEG decoding only when absent or too small. This
-  dramatically speeds up initial gallery loading on USB drives and external HDDs while keeping heap usage tiny.
+- **Two-stage progressive gallery thumbnails (`PhotoImageDecoder.decodeEmbeddedThumbnail`, `GalleryActivity`):**
+  Even on 4K TVs, Android TV renders its UI surface at 1080p (`density = 2.0`), so each gallery tile is ~220 px
+  (~251 px at 1.14x focus zoom) and a `1.25x` tile target (`220–320 px`) is native-sharp. To keep scrolling and year
+  jumps instant even in a 10,000-photo USB/HDD library without sacrificing sharpness, uncached tiles first display the
+  tiny ~20 KB embedded EXIF thumbnail immediately (stage 1), then upgrade visible tiles to a crisp `1.25x` sampled
+  decode (stage 2, cancelled immediately if scrolled off-screen). Only crisp thumbnails are persisted to the 32 MB
+  `DiskPhotoCache`, so repeat opens and revisited pages are both instant and sharp.
 - **USB / external HDD sleep & remount recovery (`LocalPhotoSource.isFolderAvailable`, `GalleryActivity`, `PhotoPreviewActivity`):**
   External USB hard drives often lose power during TV sleep and take 2–10 seconds to spin up and remount on wake.
   `LocalPhotoSource.refresh` never wipes `photo_index.tsv` when the folder is temporarily unmounted; `GalleryActivity`

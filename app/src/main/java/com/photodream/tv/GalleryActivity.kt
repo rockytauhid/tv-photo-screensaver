@@ -1422,46 +1422,35 @@ class GalleryActivity : Activity() {
             holder.taskKey = null
         }
 
-        fun warmThumbnail(file: File) {
-            if (closed) return
-            val key = file.absolutePath
-            if (thumbnailCache.get(key) != null || hasFailedThumbnail(key)) return
-            val bitmap = decodeThumbnail(file)
-            if (closed) {
-                bitmap?.recycle()
-                return
-            }
-            if (bitmap != null) {
-                thumbnailCache.put(key, bitmap)
-            } else {
-                rememberThumbnailFailure(key)
+        private fun thumbnailTargetPx(): Int =
+            (dp(thumbnailSizeDp) * 1.25f).toInt().coerceIn(220, 320)
+
+        private fun readCachedThumbnail(diskKey: String): Bitmap? {
+            val cachedFile = thumbnailDiskCache.get(diskKey) ?: return null
+            return try {
+                BitmapFactory.decodeFile(
+                    cachedFile.absolutePath,
+                    BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                )
+            } catch (_: OutOfMemoryError) {
+                null
             }
         }
 
-        private fun decodeThumbnail(file: File): Bitmap? {
-            val targetPx = minOf(dp(thumbnailSizeDp) * 2, 512)
-            val diskKey = "${file.absolutePath}|${file.lastModified()}|$targetPx"
-            val cachedFile = thumbnailDiskCache.get(diskKey)
-            if (cachedFile != null) {
-                val cachedBitmap = try {
-                    BitmapFactory.decodeFile(
-                        cachedFile.absolutePath,
-                        BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
-                    )
-                } catch (_: OutOfMemoryError) {
-                    null
-                }
-                if (cachedBitmap != null) return cachedBitmap
+        private fun saveCrispThumbnail(diskKey: String, bitmap: Bitmap) {
+            thumbnailDiskCache.put(diskKey) { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)
             }
-            val decoded = PhotoImageDecoder.decodeThumbnail(
+        }
+
+        private fun decodeCrispThumbnail(file: File, targetPx: Int, diskKey: String): Bitmap? {
+            val decoded = PhotoImageDecoder.decode(
                 file,
                 targetPx,
                 targetPx,
                 Bitmap.Config.RGB_565
             ) ?: return null
-            thumbnailDiskCache.put(diskKey) { output ->
-                decoded.compress(Bitmap.CompressFormat.JPEG, 82, output)
-            }
+            saveCrispThumbnail(diskKey, decoded)
             return decoded
         }
 
@@ -1486,16 +1475,73 @@ class GalleryActivity : Activity() {
             private var cancelled = false
 
             override fun run() {
-                val bitmap = decodeThumbnail(file)
-                if (cancelled || closed) {
-                    bitmap?.recycle()
+                if (cancelled || closed) return
+                val targetPx = thumbnailTargetPx()
+                val diskKey = "${file.absolutePath}|${file.lastModified()}|$targetPx"
+
+                // Fast path: crisp thumbnail already in local flash DiskPhotoCache.
+                val diskCached = readCachedThumbnail(diskKey)
+                if (diskCached != null) {
+                    if (cancelled || closed) {
+                        diskCached.recycle()
+                        return
+                    }
+                    thumbnailCache.put(key, diskCached)
+                    deliverFinal(diskCached, fadeIn = true)
                     return
                 }
-                if (bitmap != null) {
-                    thumbnailCache.put(key, bitmap)
-                } else {
-                    rememberThumbnailFailure(key)
+
+                // Stage 1: show embedded EXIF thumbnail immediately for instant recognition on USB/HDD.
+                var showedPreview = false
+                val embedded = PhotoImageDecoder.decodeEmbeddedThumbnail(file, Bitmap.Config.RGB_565)
+                if (embedded != null) {
+                    if (cancelled || closed) {
+                        embedded.recycle()
+                        return
+                    }
+                    if (PhotoImageDecoder.isThumbnailSharpEnough(embedded.width, embedded.height, targetPx)) {
+                        saveCrispThumbnail(diskKey, embedded)
+                        thumbnailCache.put(key, embedded)
+                        deliverFinal(embedded, fadeIn = true)
+                        return
+                    }
+                    showedPreview = true
+                    mainHandler.post {
+                        if (cancelled || closed) return@post
+                        if (holder.boundKey == key && holder.image.tag == key) {
+                            holder.image.animate().cancel()
+                            holder.image.alpha = 0f
+                            holder.image.setImageBitmap(embedded)
+                            holder.image.animate().alpha(1f).setDuration(120).start()
+                            holder.placeholder.visibility = View.GONE
+                        }
+                    }
                 }
+
+                // Stage 2: upgrade visible tile to crisp native-resolution thumbnail and cache it.
+                if (cancelled || closed) return
+                val crisp = decodeCrispThumbnail(file, targetPx, diskKey)
+                if (cancelled || closed) {
+                    crisp?.recycle()
+                    return
+                }
+                if (crisp != null) {
+                    thumbnailCache.put(key, crisp)
+                    deliverFinal(crisp, fadeIn = !showedPreview)
+                } else if (!showedPreview) {
+                    rememberThumbnailFailure(key)
+                    deliverFinal(null, fadeIn = false)
+                } else {
+                    mainHandler.post {
+                        if (holder.task === this) {
+                            holder.task = null
+                            holder.taskKey = null
+                        }
+                    }
+                }
+            }
+
+            private fun deliverFinal(bitmap: Bitmap?, fadeIn: Boolean) {
                 mainHandler.post {
                     if (cancelled) return@post
                     if (holder.task === this) {
@@ -1505,9 +1551,14 @@ class GalleryActivity : Activity() {
                     if (holder.boundKey == key && holder.image.tag == key) {
                         if (bitmap != null) {
                             holder.image.animate().cancel()
-                            holder.image.alpha = 0f
-                            holder.image.setImageBitmap(bitmap)
-                            holder.image.animate().alpha(1f).setDuration(120).start()
+                            if (fadeIn) {
+                                holder.image.alpha = 0f
+                                holder.image.setImageBitmap(bitmap)
+                                holder.image.animate().alpha(1f).setDuration(120).start()
+                            } else {
+                                holder.image.alpha = 1f
+                                holder.image.setImageBitmap(bitmap)
+                            }
                             holder.placeholder.visibility = View.GONE
                         } else {
                             holder.placeholder.setText(R.string.gallery_thumbnail_unavailable)
