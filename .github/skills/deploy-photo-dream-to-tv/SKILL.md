@@ -69,7 +69,7 @@ Use this workflow only for the user's own TV, with their explicit authorization 
    ```
 
    Otherwise, leave the current screensaver selection unchanged and let the user select Photo Dream in TV settings.
-8. When deployment is complete, have the user turn off USB and network/ADB debugging, revoke debugging authorizations, and reboot the TV. Then check only the supplied host with the project's `adb-closed.py` tool, as documented in `docs/DEPLOY.md`. If the port is still open, report that plainly and do not claim the session is secured.
+8. When deployment is complete, have the user turn off USB and network/ADB debugging, revoke debugging authorizations, and reboot the TV. Then check only the supplied host with `Test-NetConnection -ComputerName <tv ip> -Port 5555` (expecting `TcpTestSucceeded : False`), as documented in `docs/DEPLOY.md`. If the port is still open, report that plainly and do not claim the session is secured.
 
 ## Reporting
 

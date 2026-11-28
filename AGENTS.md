@@ -36,13 +36,14 @@ storage. Kotlin (standard library only until a dependency is justified), `minSdk
 Follow the safety rules in `docs/CONTEXT.md` and `docs/DEPLOY.md`. In short: back up before changing settings,
 change one thing at a time, keep the undo command (`settings put secure screensaver_components
 com.google.android.backdrop/.Backdrop`), never touch factory or test menus, never disable Android's core packages,
-and close ADB (USB and network debugging off, reboot, `adb-closed.py`) when the session ends.
+and close ADB (USB and network debugging off, reboot, verify port 5555 closed via
+`Test-NetConnection -ComputerName <tv ip> -Port 5555` expecting `TcpTestSucceeded : False`) when the session ends.
 
 ## Before finishing a change
 
 - `.\gradlew.bat --no-daemon testDebugUnitTest assembleRelease` passes (set `JAVA_HOME` and `ANDROID_HOME` as in
   README.md).
 - New behaviour has a JVM unit test where it can be tested without a TV.
-- A visual change has a screenshot from the TV (`tv.py --screenshot`), with Wi-Fi names and people blurred.
+- A visual change has a screenshot (`adb exec-out screencap -p > shots\x.png`), with Wi-Fi names and people blurred.
 - Docs stay in step: update `docs/DESIGN.md` (milestones, decisions) and `docs/DEPLOY.md` (anything learned about
   starting or selecting the dream).

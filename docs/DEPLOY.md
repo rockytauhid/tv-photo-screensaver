@@ -66,7 +66,11 @@ This only removes this app. The settings value above must be restored first, or 
 ## Closing ADB afterwards
 
 Switch USB debugging and Network/ADB debugging off in the TV's Developer options, revoke USB debugging authorisations,
-reboot the TV, then verify port 5555 is closed before ending the session.
+reboot the TV, then verify port 5555 is closed before ending the session:
 
-Port 5555 is plaintext and unauthenticated for anyone on the same network once an authorisation exists, so do not
-leave it open.
+```powershell
+Test-NetConnection -ComputerName <tv ip> -Port 5555
+```
+
+Expect `TcpTestSucceeded : False`. Port 5555 is plaintext and unauthenticated for anyone on the same network once an
+authorisation exists, so do not leave it open.

@@ -153,7 +153,7 @@ Rules for cloud code:
   sample-size maths, OAuth response parsing, WebDAV `PROPFIND` XML parsing. Run with `gradlew testDebugUnitTest`.
 - A fake `PhotoSource` that serves bundled images makes slideshow tests possible without a TV.
 - On the TV: select the dream (`settings put secure screensaver_components ...`), wait for it to start by itself, take
-  screenshots with `tv.py --screenshot`. A way to start a dream on demand is **unverified** on this firmware
+  screenshots with `adb exec-out screencap -p > shots\x.png`. A way to start a dream on demand is **unverified** on this firmware
   (for example `am start -n com.android.systemui/.Somnambulator`); try it and record what works in DEPLOY.md.
 - Check memory with `dumpsys meminfo com.photodream.tv` after several hundred slides to catch leaks.
 
@@ -192,10 +192,11 @@ Keep these intentional behaviours intact when refactoring or optimizing:
 - **Two-stage progressive gallery thumbnails (`PhotoImageDecoder.decodeEmbeddedThumbnail`, `GalleryActivity`):**
   Even on 4K TVs, Android TV renders its UI surface at 1080p (`density = 2.0`), so each gallery tile is ~220 px
   (~251 px at 1.14x focus zoom) and a `1.25x` tile target (`220–320 px`) is native-sharp. To keep scrolling and year
-  jumps instant even in a 10,000-photo USB/HDD library without sacrificing sharpness, uncached tiles first display the
-  tiny ~20 KB embedded EXIF thumbnail immediately (stage 1), then upgrade visible tiles to a crisp `1.25x` sampled
-  decode (stage 2, cancelled immediately if scrolled off-screen). Only crisp thumbnails are persisted to the 32 MB
-  `DiskPhotoCache`, so repeat opens and revisited pages are both instant and sharp.
+  jumps instant even in a 10,000-photo USB/HDD library without sacrificing sharpness, uncached tiles first validate
+  the embedded EXIF thumbnail's oriented aspect ratio (within 2% of the main image, rejecting stale cropped or
+  pre-rotated thumbnails), show it immediately as stage 1, and reuse the parsed EXIF orientation when upgrading
+  visible tiles to a crisp `1.25x` sampled decode (stage 2, cancelled immediately if scrolled off-screen). Only crisp
+  thumbnails are persisted to the 32 MB `DiskPhotoCache`, so repeat opens and revisited pages are both instant and sharp.
 - **USB / external HDD sleep & remount recovery (`LocalPhotoSource.isFolderAvailable`, `GalleryActivity`, `PhotoPreviewActivity`):**
   External USB hard drives often lose power during TV sleep and take 2–10 seconds to spin up and remount on wake.
   `LocalPhotoSource.refresh` never wipes `photo_index.tsv` when the folder is temporarily unmounted; `GalleryActivity`
@@ -296,8 +297,6 @@ Keep these intentional behaviours intact when refactoring or optimizing:
   when it belongs to the configured slideshow photo set.
 - The Preview screen's play icon starts the manual slideshow from that photo. Returning from Preview or its
   slideshow forwards the selected or last-displayed path to Gallery.
-- When a selected photo's previous or next thumbnail is outside the visible grid, a narrow cropped preview at that
-  screen edge cues the adjacent image. These two previews use the same bounded background thumbnail loader/cache.
 - Thumbnails show a clean dark tile while decoding and fade in smoothly once ready; unreadable images show a
   "No preview" placeholder. The full-screen preview shows the failed filename, and left/right navigation remains
   available.
