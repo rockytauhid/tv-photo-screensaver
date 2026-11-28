@@ -144,6 +144,31 @@ class PhotoRepositoryTest {
         assertEquals(listOf("old"), matched.map { it.id })
     }
 
+    @Test
+    fun mergeRefreshedPlaybackRefsPreservesShuffleOrderAndAppendsNewItems() {
+        val existing = listOf(photo("c", 3000L), photo("a", 1000L), photo("b", 2000L))
+        val refreshed = listOf(
+            photo("a", 1000L),
+            photo("c", 3500L), // updated timestamp
+            photo("d", 4000L), // newly added
+            photo("e", 5000L)  // newly added
+        ) // "b" was removed
+
+        val merged = PhotoRepository.mergeRefreshedPlaybackRefs(
+            existing = existing,
+            refreshed = refreshed,
+            sortOrder = PhotoSortOrder.RANDOM,
+            favoritesOnly = false,
+            favoritePaths = emptySet()
+        )
+
+        // Surviving items keep their exact shuffled order ("c", "a"), removed "b" is dropped,
+        // updated metadata for "c" is applied, and new items ("d", "e") are appended at the end.
+        assertEquals(listOf("c", "a"), merged.take(2).map { it.id })
+        assertEquals(3500L, merged[0].captureTimeMillis)
+        assertEquals(setOf("d", "e"), merged.drop(2).map { it.id }.toSet())
+    }
+
     private fun photo(id: String, time: Long): PhotoRef =
         PhotoRef(id = id, sourceId = "fake:lan", displayName = "$id.jpg", captureTimeMillis = time)
 }

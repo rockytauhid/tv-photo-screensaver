@@ -232,18 +232,18 @@ class SlideshowActivity : Activity() {
         worker?.execute {
             val refreshed = PhotoRepository.safeRefresh(source, cached)
             if (!refreshed.changed) return@execute
-            val ordered = PhotoRepository.orderPlaybackRefs(
-                refreshed.items,
-                sortOrder,
-                favoritesOnly,
-                favoritePaths
-            )
             mainHandler.post {
                 if (!isRunning) return@post
                 val currentId = photos.getOrNull(displayedPhotoIndex)?.id
                     ?: photos.getOrNull(currentPhotoIndex)?.id
                 val oldNextId = photos.getOrNull(nextPhoto)?.id
-                photos = ordered
+                photos = PhotoRepository.mergeRefreshedPlaybackRefs(
+                    photos,
+                    refreshed.items,
+                    sortOrder,
+                    favoritesOnly,
+                    favoritePaths
+                )
                 if (photos.isEmpty()) {
                     clearPrefetched()
                     currentPhotoIndex = -1

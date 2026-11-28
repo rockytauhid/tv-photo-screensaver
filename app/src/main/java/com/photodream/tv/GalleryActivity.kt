@@ -742,6 +742,14 @@ class GalleryActivity : Activity() {
                 startSlideshowButton.isEnabled = false
                 headerTitle.text = getString(R.string.app_name)
             }
+            GalleryUiState.StorageNotFound -> {
+                galleryFrame.visibility = View.INVISIBLE
+                status.setText(R.string.gallery_storage_not_found)
+                status.visibility = View.VISIBLE
+                startSlideshowButton.isEnabled = false
+                headerTitle.text = getString(R.string.app_name)
+                settingsButton.requestFocus()
+            }
             GalleryUiState.Empty -> {
                 galleryFrame.visibility = View.INVISIBLE
                 status.setText(R.string.gallery_no_photos)
@@ -866,7 +874,12 @@ class GalleryActivity : Activity() {
 
     private fun scheduleStorageRetry(folderPath: String) {
         cancelStorageRetry()
-        if (storageRetryCount >= MAX_STORAGE_WAIT_RETRIES) return
+        if (storageRetryCount >= MAX_STORAGE_WAIT_RETRIES) {
+            if (allPhotos.isEmpty()) {
+                renderState(GalleryUiState.StorageNotFound)
+            }
+            return
+        }
         val retry = Runnable {
             storageRetryRunnable = null
             if (isFinishing || isDestroyed || photoFolderPath != folderPath) return@Runnable
@@ -1638,6 +1651,7 @@ class GalleryActivity : Activity() {
         data object NeedsFolder : GalleryUiState
         data object Loading : GalleryUiState
         data object WaitingForStorage : GalleryUiState
+        data object StorageNotFound : GalleryUiState
         data object Empty : GalleryUiState
         data class Ready(val itemCount: Int) : GalleryUiState
     }

@@ -438,7 +438,8 @@ class SettingsActivity : Activity() {
             Thread(runnable, "photo-details").apply { isDaemon = true }
         }.also { detailsExecutor = it }
         worker.execute {
-            val details = PhotoMetadata.readDetails(file)
+            val is24Hour = android.text.format.DateFormat.is24HourFormat(this)
+            val details = PhotoMetadata.readDetails(file, is24Hour)
             mainHandler.post {
                 if (isFinishing || isDestroyed) return@post
                 renderPhotoDetails(details, locationName = null)

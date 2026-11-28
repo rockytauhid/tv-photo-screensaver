@@ -140,6 +140,34 @@ internal class PhotoRepository(private val context: Context) {
         }
 
         /**
+         * Merges a background refresh into the active playback list. When [sortOrder] is
+         * [PhotoSortOrder.RANDOM], keeps surviving photos in their existing shuffled order and
+         * appends newly discovered photos (shuffled) so already-shown photos do not repeat soon.
+         */
+        internal fun mergeRefreshedPlaybackRefs(
+            existing: List<PhotoRef>,
+            refreshed: List<PhotoRef>,
+            sortOrder: PhotoSortOrder,
+            favoritesOnly: Boolean,
+            favoritePaths: Set<String>
+        ): List<PhotoRef> {
+            if (sortOrder == PhotoSortOrder.DATE_TIME || existing.isEmpty()) {
+                return orderPlaybackRefs(refreshed, sortOrder, favoritesOnly, favoritePaths)
+            }
+            val candidates = if (favoritesOnly) {
+                val matched = refreshed.filter { it.id in favoritePaths }
+                matched.ifEmpty { refreshed }
+            } else {
+                refreshed
+            }
+            val byId = candidates.associateBy { it.id }
+            val kept = existing.mapNotNull { byId[it.id] }
+            val keptIds = kept.mapTo(HashSet(kept.size)) { it.id }
+            val added = candidates.filter { it.id !in keptIds }.shuffled()
+            return kept + added
+        }
+
+        /**
          * Computes the new `nextPhoto` index after a background refresh swaps in [newItems] without
          * interrupting the currently displayed photo ([currentId]). Keeps pointing at [nextId] if
          * it is still present, otherwise continues after [currentId], otherwise starts at 0.

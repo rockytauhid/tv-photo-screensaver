@@ -113,16 +113,16 @@ class PhotoDream : DreamService() {
         worker?.execute {
             val refreshed = PhotoRepository.safeRefresh(source, cached)
             if (!refreshed.changed) return@execute
-            val ordered = PhotoRepository.orderPlaybackRefs(
-                refreshed.items,
-                sortOrder,
-                favoritesOnly,
-                favoritePaths
-            )
             mainHandler.post {
                 if (!isRunning) return@post
                 val oldNextId = photos.getOrNull(nextPhoto)?.id
-                photos = ordered
+                photos = PhotoRepository.mergeRefreshedPlaybackRefs(
+                    photos,
+                    refreshed.items,
+                    sortOrder,
+                    favoritesOnly,
+                    favoritePaths
+                )
                 if (photos.isEmpty()) {
                     clearPrefetched()
                     stage.status.setText(R.string.no_photos_found)

@@ -75,8 +75,10 @@ class PhotoMetadataTest {
     }
 
     @Test
-    fun formatDateTimeFormatsReadableDateAndTime() {
-        val text = PhotoMetadata.formatDateTime(1_700_000_000_000L, Locale.US)
-        assertEquals(true, text.contains("2023") && text.contains("·"))
+    fun formatDateTimeRespects12HourAnd24HourFormats() {
+        val text12 = PhotoMetadata.formatDateTime(1_700_000_000_000L, is24Hour = false, locale = Locale.US)
+        val text24 = PhotoMetadata.formatDateTime(1_700_000_000_000L, is24Hour = true, locale = Locale.US)
+        assertEquals(true, text12.contains("2023") && (text12.endsWith("AM") || text12.endsWith("PM")))
+        assertEquals(true, text24.contains("2023") && !text24.endsWith("AM") && !text24.endsWith("PM"))
     }
 }

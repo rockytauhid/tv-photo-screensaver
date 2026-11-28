@@ -57,14 +57,14 @@ internal object PhotoMetadata {
 
     /** Reads full EXIF and file metadata for the Preview Settings details panel. Call off the main thread. */
     @Suppress("DEPRECATION")
-    fun readDetails(file: File): PhotoDetails {
+    fun readDetails(file: File, is24Hour: Boolean = false): PhotoDetails {
         val exif = readExif(file)
         val captureTime = if (exif != null) {
             captureTimeMillis(exif, file.lastModified())
         } else {
             file.lastModified()
         }
-        val dateTimeText = if (captureTime > 0L) formatDateTime(captureTime) else null
+        val dateTimeText = if (captureTime > 0L) formatDateTime(captureTime, is24Hour) else null
         val camera = exif?.let {
             formatCamera(
                 it.getAttribute(ExifInterface.TAG_MAKE),
@@ -96,8 +96,14 @@ internal object PhotoMetadata {
         )
     }
 
-    internal fun formatDateTime(captureTimeMillis: Long, locale: Locale = Locale.getDefault()): String =
-        SimpleDateFormat("MMM dd, yyyy · h:mm a", locale).format(Date(captureTimeMillis))
+    internal fun formatDateTime(
+        captureTimeMillis: Long,
+        is24Hour: Boolean = false,
+        locale: Locale = Locale.getDefault()
+    ): String {
+        val pattern = if (is24Hour) "MMM dd, yyyy · HH:mm" else "MMM dd, yyyy · h:mm a"
+        return SimpleDateFormat(pattern, locale).format(Date(captureTimeMillis))
+    }
 
     internal fun formatCamera(make: String?, model: String?): String? {
         val cleanMake = make?.trim().orEmpty()
